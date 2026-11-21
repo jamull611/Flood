@@ -122,3 +122,16 @@ Everything runs on your computer. Nothing is uploaded anywhere.
   Works offline: claims, fees and pay, contact log, follow-ups, checklists, Copy.
   Needs internet: the map, route planning and "Offer times" (looking up addresses
   and drive times), the QR code, and AdStrat sync.
+
+
+7. USE IT AS AN APP ON ALL YOUR DEVICES (optional)
+-------------------------------------------------
+  Once the tracker is hosted online and cloud sync is set up (see README.md):
+    - Open the tracker's web address and install it: in Chrome on a computer, click
+      the install icon in the address bar; on Android, menu > Install app; on
+      iPhone, Safari > Share > Add to Home Screen.
+    - Settings > Cloud sync: create an account on one device, then sign in with the
+      same email and password on your other devices. Your claims stay in sync.
+    - It still works offline; changes sync when you're back online.
+  Already have claims in this file version? Sign in from it first and they'll be
+  uploaded. (Sign-in works from the file too, while you're online.)

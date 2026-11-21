@@ -38,8 +38,12 @@ async function pull() {
   return res;
 }
 
+// Pages allowed to ask for a sync: the tracker opened as a file, or the installed web app.
+// Keep this in step with "matches" in manifest.json.
+const TRACKER_PAGES = [/^file:\/\//i, /^https:\/\/jamull611\.github\.io\/Flood\//i];
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (!msg || !sender.tab || !/^file:\/\//i.test(sender.url || '')) return;
+  if (!msg || !sender.tab || !TRACKER_PAGES.some(re => re.test(sender.url || ''))) return;
   if (msg.type === 'adstrat-fetch') {
     pull().then(sendResponse, e => sendResponse({ ok: false, error: String((e && e.message) || e) }));
     return true;

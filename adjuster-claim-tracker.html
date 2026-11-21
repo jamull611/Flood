@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1a1d23">
 <title>Adjuster Claim Tracker</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Claims">
 <script>
   (() => {
     const saved = localStorage.getItem('adjusterClaimTracker.theme');
@@ -2742,6 +2748,15 @@ function startApp() {
   setInterval(() => { if (document.visibilityState === 'visible' && !document.querySelector('dialog[open]')) { if (currentTab === 'today') renderToday(); else if (currentTab === 'claims') renderClaims(); } }, 60000);
 }
 startApp();
+</script>
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="sync.js"></script>
+<script>
+// Installable app + offline support (only when served from a website, not when opened as a file).
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(e => console.warn('Offline support unavailable:', e)));
+}
 </script>
 </body>
 </html>
