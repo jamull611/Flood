@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Claim Tracker - AdStrat Sync",
+  "version": "1.0.0",
+  "description": "Lets your Adjuster Claim Tracker read your AdStrat claim list while you're signed in to AdStrat. Read-only; never changes anything in AdStrat.",
+  "icons": { "16": "icon16.png", "48": "icon48.png", "128": "icon128.png" },
+  "host_permissions": ["https://cms.adminstrat.com/*"],
+  "permissions": ["scripting"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["file:///*claim-tracker*.html"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

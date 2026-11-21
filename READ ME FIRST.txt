@@ -1,0 +1,124 @@
+ADJUSTER CLAIM TRACKER - HOW TO SET UP
+=======================================
+
+What's in this folder
+---------------------
+  adjuster-claim-tracker.html        The tracker. Open it in Google Chrome.
+  claim-tracker-adstrat-extension    Chrome extension that pulls your claims from AdStrat.
+  READ ME FIRST.txt                  This file.
+
+Keep the tracker file and the extension folder together in this folder.
+Everything runs on your computer. Nothing is uploaded anywhere.
+
+
+1. OPEN THE TRACKER
+-------------------
+  - Right-click adjuster-claim-tracker.html > Open with > Google Chrome.
+  - Bookmark it (Ctrl+D) so you can get back to it easily.
+  - Your claims are saved inside Chrome on this computer, so always open it in
+    Chrome on this same computer.
+
+  Already using an older copy of the tracker?
+  Your claims should show up automatically. If they don't:
+    a. Open the OLD copy, go to Settings & Data > Backups > "Download backup file".
+    b. Open this NEW copy, go to Settings > Backups > "Restore from backup file"
+       and pick the file you just downloaded.
+
+
+2. INSTALL THE ADSTRAT EXTENSION (one time)
+-------------------------------------------
+  a. In Chrome, go to:  chrome://extensions
+  b. Turn on "Developer mode" (switch in the top-right corner).
+  c. Click "Load unpacked" and choose the claim-tracker-adstrat-extension
+     folder inside this folder.
+  d. On the extension's card, click "Details" and turn on
+     "Allow access to file URLs".  (Required - the tracker is a file on your computer.)
+  e. Go back to the tracker tab and refresh it (F5). Settings > AdStrat sync
+     should say "Chrome extension connected".
+
+  If you had installed the extension before from a different folder, click
+  "Remove" on the old one first, then load this one.
+
+  To sync: sign in to AdStrat in Chrome (tick "Remember Me"), then click
+  "Sync from AdStrat" on the tracker's Claims tab. It only reads your claim list;
+  it never changes anything in AdStrat and never stores your AdStrat password.
+
+  No extension? Settings > AdStrat sync has a bookmark button you can use instead.
+
+
+3. FIRST-TIME SETTINGS
+----------------------
+  Settings tab:
+    - "You (for text messages)": your name and cell number, used in the texts.
+    - Calling hours (default 8:30 AM - 8:00 PM). Follow-ups are only scheduled
+      inside these hours.
+    - Text templates: edit the wording of your texts if you like.
+    - Report checklist: the steps shown on each claim's Report tab.
+  Route Planner tab:
+    - Where you're staying, start time, "back by" time, minutes per inspection,
+      buffer between stops, max inspections per day / per week, days off and
+      blocked dates.
+
+
+4. DAILY USE
+------------
+  TODAY TAB - your to-do list:
+    - Today's inspections (with Map, Call, Text and "Inspected" buttons)
+    - Follow-ups due (who to call or text next)
+    - Appointments to confirm (next 2 days)
+    - Needs attention (past appointments still marked Scheduled, bad phone numbers)
+    - Revision requests
+
+  CALLING
+    Click Call (or a phone number). A box opens asking how it went:
+    Reached, No answer, Left voicemail, Call back later, Scheduled, Bad number...
+    The tracker then sets the next follow-up for you:
+      No answer      -> try again in 2, then 4, 8, 16, then 24 hours
+      Voicemail      -> 24 hours
+      Text, no reply -> 24 hours
+    After 5 tries with no answer, the claim is marked "Hard to reach".
+
+  TEXTING
+    Click Text, pick a template, and edit the message if needed. Then either:
+      - Point your phone's camera at the QR code and tap the link. Your phone's
+        Messages app opens with the number and message filled in. Hit send.
+      - Or click Copy and paste it into a text yourself.
+    Then click "I sent it" so it's logged. (The QR code needs an internet
+    connection to appear; Copy always works.)
+
+  OFFER 3 TIMES
+    On a claim with no inspection booked, click "Offer times". The tracker picks
+    a morning, a midday and an afternoon opening over the next week that add the
+    least driving to the appointments you already have. Send the text. When they
+    reply "1", "2" or "3", open the claim and click "Book 1/2/3".
+    Then use "Send confirmation" to text them the confirmed time.
+
+  APPOINTMENTS
+    Buttons on each booked claim: Confirmed, No-show, Reschedule, Inspected.
+    No-show and Reschedule put the claim back on your follow-up list.
+
+  PRIORITY
+    Set Urgent / High / Normal / Low on a claim (Activity tab or Details).
+    The Route Planner books Urgent and High claims first.
+
+  REPORT TAB (on each claim)
+    Tick off report steps as you go (photos, captions, estimate, prelim, POL,
+    final). For a revision request, list each change the examiner asked for and
+    tick them off as you fix them.
+
+
+5. BACKUPS - PLEASE SET THIS UP
+-------------------------------
+  Your claims live only inside Chrome on this computer. Clearing Chrome's
+  browsing data or switching computers would lose them.
+    - Settings > Backups > "Choose backup folder..." turns on automatic backups
+      after every change (keeps 30 days of daily copies).
+    - Or click "Download backup file" now and then.
+    - The "Back up now" button at the top turns orange when you're overdue.
+
+
+6. WHAT NEEDS INTERNET
+----------------------
+  Works offline: claims, fees and pay, contact log, follow-ups, checklists, Copy.
+  Needs internet: the map, route planning and "Offer times" (looking up addresses
+  and drive times), the QR code, and AdStrat sync.

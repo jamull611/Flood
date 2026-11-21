@@ -1,0 +1,2747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1d23">
+<title>Adjuster Claim Tracker</title>
+<script>
+  (() => {
+    const saved = localStorage.getItem('adjusterClaimTracker.theme');
+    const theme = saved && saved !== 'auto' ? saved : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root {
+  color-scheme: light;
+  --cp-bg: #f7f4ef;
+  --cp-bg-elevated: #fcfbf8;
+  --cp-surface: #ffffff;
+  --cp-surface-soft: #f5f5f5;
+  --cp-border: #dedede;
+  --cp-border-strong: #919191;
+  --cp-text: #242424;
+  --cp-text-muted: #5c5c5c;
+  --cp-text-soft: #6f6f6f;
+  --cp-accent: #b11f4b;
+  --cp-accent-hover: #9a1a41;
+  --cp-accent-soft: rgba(177, 31, 75, 0.08);
+  --cp-accent-fg: #ffffff;
+  --cp-success: #16a34a;
+  --cp-danger: #dc2626;
+  --cp-warning: #b45309;
+  --cp-link: #0078d4;
+  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+  --cp-overlay: rgba(255, 255, 255, 0.8);
+  --cp-highlight: rgba(177, 31, 75, 0.12);
+  --st-need: #b00000; --st-contacted: #5b2c8f; --st-scheduled: #1f6fb2; --st-inspected: #215a6d;
+  --st-progress: #b7b7b7; --st-er: #4a86e8; --st-prelim: #a4c2f4; --st-pol: #ff4fd8; --st-final: #ff9900;
+  --st-revision: #ff0000; --st-accepted: #00e600; --st-paid: #6aa84f; --st-closed: #666666;
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-t: env(safe-area-inset-top, 0px);
+}
+html[data-theme="dark"] {
+  /* Matches the BN Metro Dashboard palette */
+  color-scheme: dark;
+  --cp-bg: #1a1d23;
+  --cp-bg-elevated: #22262e;
+  --cp-surface: #2a2e37;
+  --cp-surface-soft: #22262e;
+  --cp-border: #3a3f4a;
+  --cp-border-strong: #6b7280;
+  --cp-text: #f0f0f0;
+  --cp-text-muted: #a0a8b4;
+  --cp-text-soft: #a0a8b4;
+  --cp-accent: #0078d4;
+  --cp-accent-hover: #2b88d8;
+  --cp-accent-soft: rgba(0, 120, 212, 0.18);
+  --cp-accent-fg: #ffffff;
+  --cp-success: #10b981;
+  --cp-danger: #ef4444;
+  --cp-warning: #f59e0b;
+  --cp-link: #2b88d8;
+  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  --cp-overlay: rgba(0, 0, 0, 0.6);
+  --cp-highlight: rgba(0, 120, 212, 0.3);
+}
+html[data-theme="dark"] .card, html[data-theme="dark"] .panel, html[data-theme="dark"] .ccard { border: 1px solid var(--cp-border); box-shadow: none; }
+html[data-theme="dark"] tbody tr:hover { background: #333843; }
+html[data-theme="dark"] th { color: #6b7280; text-transform: uppercase; letter-spacing: .5px; font-size: 11px; }
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--cp-bg); color: var(--cp-text); font: 14px/1.45 "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+a { color: var(--cp-link); }
+[hidden] { display: none !important; }
+
+/* ---------- header / nav ---------- */
+.topbar { display: flex; align-items: center; gap: 14px; padding: 10px 20px; padding-top: calc(10px + var(--safe-t)); background: var(--cp-bg-elevated); border-bottom: 1px solid var(--cp-border); position: sticky; top: 0; z-index: 1000; }
+.topbar h1 { font-size: 18px; margin: 0; font-weight: 600; white-space: nowrap; }
+.tabs { display: flex; gap: 4px; }
+.tabs button { background: none; border: 0; padding: 8px 14px; border-radius: 0.625rem; color: var(--cp-text-muted); font: inherit; cursor: pointer; white-space: nowrap; }
+.tabs button.active { background: var(--cp-accent-soft); color: var(--cp-accent); font-weight: 600; }
+html[data-theme="dark"] .tabs button.active { color: #fff; }
+.spacer { flex: 1; }
+.sync-pill { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--cp-border); background: var(--cp-surface); color: var(--cp-text-muted); cursor: pointer; white-space: nowrap; }
+.sync-pill.good { color: var(--cp-success); }
+.sync-pill.warn { color: var(--cp-warning); border-color: var(--cp-warning); }
+.sync-pill.bad { color: var(--cp-danger); border-color: var(--cp-danger); }
+.bottombar { display: none; }
+main { padding: 16px 20px 40px; max-width: 1600px; margin: 0 auto; }
+.tab { display: none; }
+.tab.active { display: block; }
+.phone-only { display: none !important; }
+
+/* ---------- controls ---------- */
+input, select, textarea { font: inherit; color: var(--cp-text); background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 0.625rem; padding: 7px 10px; max-width: 100%; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--cp-highlight); border-color: var(--cp-accent); }
+textarea { resize: vertical; }
+.btn { font: inherit; cursor: pointer; border-radius: 0.625rem; padding: 7px 14px; border: 1px solid var(--cp-border); background: var(--cp-surface); color: var(--cp-text); text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 2px; white-space: nowrap; }
+.btn:hover { border-color: var(--cp-border-strong); }
+.btn.small { padding: 4px 10px; font-size: 13px; }
+.btn.big { padding: 11px 18px; font-size: 16px; width: 100%; }
+.btn.icon { padding: 4px 9px; }
+.primary, .btn.primary { background: var(--cp-accent); color: var(--cp-accent-fg); border-color: var(--cp-accent); }
+.btn.primary:hover { background: var(--cp-accent-hover); }
+.btn.danger, button.danger { color: var(--cp-danger); }
+button:disabled { opacity: .5; cursor: default; }
+#backupBtn.warn { color: var(--cp-warning); border-color: var(--cp-warning); font-weight: 600; }
+.flash { animation: flash 1.6s ease 2; }
+@keyframes flash { 50% { box-shadow: 0 0 0 4px var(--cp-accent); } }
+.seg { display: flex; gap: 4px; padding: 3px; background: var(--cp-surface-soft); border: 1px solid var(--cp-border); border-radius: 0.75rem; overflow-x: auto; }
+.seg.wrap { flex-wrap: wrap; }
+.seg button { flex: 1; font: inherit; font-size: 13px; padding: 6px 10px; border: 0; border-radius: 0.55rem; background: none; color: var(--cp-text-muted); cursor: pointer; white-space: nowrap; }
+.seg button.active { background: var(--cp-surface); color: var(--cp-text); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+html[data-theme="dark"] .seg button.active { background: var(--cp-accent); color: #fff; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--cp-border); background: var(--cp-surface); color: var(--cp-text); cursor: pointer; }
+.chip button { border: 0; background: none; color: var(--cp-text-muted); cursor: pointer; padding: 0 0 0 2px; font: inherit; }
+label.f { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--cp-text-muted); min-width: 0; }
+label.f input, label.f select, label.f textarea { color: var(--cp-text); font-size: 14px; width: 100%; }
+label.f.check { flex-direction: row; align-items: center; gap: 8px; color: var(--cp-text); }
+label.f.check input { width: auto; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+.row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.muted { color: var(--cp-text-muted); }
+.small { font-size: 12px; }
+.bad { color: var(--cp-danger); }
+.flag { color: var(--cp-warning); cursor: help; }
+.stale-warn { color: var(--cp-warning); font-weight: 600; }
+.stale-bad { color: var(--cp-danger); font-weight: 600; }
+.due { color: var(--cp-warning); }
+.empty { padding: 40px 20px; text-align: center; color: var(--cp-text-muted); }
+
+/* ---------- badges ---------- */
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--cp-border); white-space: nowrap; font-weight: 500; }
+.pill.good { color: var(--cp-success); border-color: var(--cp-success); }
+.pill.bad { color: var(--cp-danger); border-color: var(--cp-danger); }
+.prio { display: inline-block; padding: 1px 7px; border-radius: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; vertical-align: 1px; }
+.prio-urgent { background: var(--cp-danger); color: #fff; }
+.prio-high { background: var(--cp-warning); color: #fff; }
+.prio-low { border: 1px solid var(--cp-border); color: var(--cp-text-muted); font-weight: 500; }
+.st-pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; color: #fff; white-space: nowrap; vertical-align: 1px; }
+.count { display: inline-block; min-width: 20px; padding: 0 7px; border-radius: 999px; background: var(--cp-accent-soft); color: var(--cp-accent); font-size: 12px; font-weight: 600; text-align: center; }
+html[data-theme="dark"] .count { color: #9ccbf0; }
+html[data-theme="dark"] .tabs button.active { color: #fff; }
+select.st { border: 0; border-radius: 999px; font-weight: 600; padding: 3px 10px; color: #fff; }
+select.st option { background: var(--cp-surface); color: var(--cp-text); }
+.st-need-to-contact { background: var(--st-need); }
+.st-contacted { background: var(--st-contacted); }
+.st-scheduled { background: var(--st-scheduled); }
+.st-inspected { background: var(--st-inspected); }
+.st-in-progress { background: var(--st-progress); color: #222 !important; }
+.st-er { background: var(--st-er); }
+.st-prelim-sent { background: var(--st-prelim); color: #222 !important; }
+.st-pending-signed-pol { background: var(--st-pol); color: #222 !important; }
+.st-final { background: var(--st-final); color: #222 !important; }
+.st-revision-request { background: var(--st-revision); }
+.st-accepted { background: var(--st-accepted); color: #222 !important; }
+.st-paid { background: var(--st-paid); color: #222 !important; }
+.st-closed { background: var(--st-closed); }
+
+/* ---------- cards + panels ---------- */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.card { background: var(--cp-surface); border-radius: 16px; padding: 12px 16px; box-shadow: 0 0 2px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.14); border: 0; text-align: left; font: inherit; color: inherit; }
+button.card { cursor: pointer; }
+button.card:hover { outline: 2px solid var(--cp-highlight); }
+.card .k { font-size: 12px; color: var(--cp-text-muted); }
+.card .v { font-size: 22px; font-weight: 600; }
+.card .v.warn { color: var(--cp-warning); }
+.card .v.bad { color: var(--cp-danger); }
+.card .v.good { color: var(--cp-success); }
+.panel { background: var(--cp-surface); border-radius: 16px; box-shadow: 0 0 2px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.14); overflow: hidden; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+#search { min-width: 260px; }
+
+/* ---------- today ---------- */
+.today-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.today-head h2 { margin: 0; font-size: 20px; }
+.today-head > div { flex: 1; }
+.list-sec { margin: 0 0 18px; scroll-margin-top: 70px; }
+.list-sec h3 { font-size: 15px; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+details.list-sec > summary { list-style: none; cursor: pointer; }
+details.list-sec > summary::-webkit-details-marker { display: none; }
+details.list-sec > summary h3::before { content: "▸"; color: var(--cp-text-muted); }
+details.list-sec[open] > summary h3::before { content: "▾"; }
+.list .item { display: flex; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--cp-border); cursor: pointer; }
+.list .item:last-child { border-bottom: 0; }
+.list .item:hover { background: var(--cp-accent-soft); }
+.item-main { flex: 1; min-width: 0; }
+.item-title { font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.item-sub { font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+.item-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+
+/* ---------- claims ---------- */
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; }
+th, td { padding: 8px 10px; border-bottom: 1px solid var(--cp-border); text-align: left; white-space: nowrap; }
+th { background: var(--cp-surface-soft); font-size: 12px; color: var(--cp-text-muted); font-weight: 600; cursor: pointer; user-select: none; position: sticky; top: 0; }
+th.sorted::after { content: " ▾"; }
+th.sorted.asc::after { content: " ▴"; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.notes { white-space: normal; min-width: 200px; max-width: 320px; color: var(--cp-text-soft); }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--cp-accent-soft); }
+tr.done td { color: var(--cp-text-muted); }
+tfoot td { font-weight: 600; background: var(--cp-surface-soft); }
+td select { padding: 3px 6px; }
+.claim-cards { display: grid; gap: 10px; }
+.ccard { background: var(--cp-surface); border-radius: 14px; padding: 12px 14px; box-shadow: 0 0 2px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.14); cursor: pointer; display: grid; gap: 4px; }
+.ccard.done { opacity: .7; }
+.ccard-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 15px; }
+.ccard-foot { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+
+/* ---------- dialogs ---------- */
+dialog { border: 0; border-radius: 16px; padding: 0; background: var(--cp-surface); color: var(--cp-text); box-shadow: var(--cp-shadow); width: min(760px, 95vw); max-height: 92vh; }
+dialog.small-sheet { width: min(560px, 95vw); }
+dialog::backdrop { background: var(--cp-overlay); }
+dialog.sheet { overflow-y: auto; }
+.dlg-head { padding: 14px 20px; border-bottom: 1px solid var(--cp-border); display: flex; align-items: flex-start; gap: 10px; position: sticky; top: 0; background: var(--cp-surface); z-index: 2; }
+.dlg-title { flex: 1; min-width: 0; font-weight: 600; font-size: 16px; }
+.dlg-title .muted { font-weight: 400; margin-top: 2px; }
+#dlgTabs { margin: 12px 20px 0; }
+.dlg-pane { padding: 14px 20px 18px; }
+form.dlg-pane { padding: 0; }
+.dlg-body { padding: 16px 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+.dlg-body.one { grid-template-columns: 1fr; }
+.dlg-body .full { grid-column: 1 / -1; }
+.dlg-foot { padding: 12px 20px; padding-bottom: calc(12px + var(--safe-b)); border-top: 1px solid var(--cp-border); display: flex; gap: 8px; align-items: center; position: sticky; bottom: 0; background: var(--cp-surface); }
+.calc { background: var(--cp-accent-soft); border-radius: 0.625rem; padding: 10px 14px; display: flex; flex-wrap: wrap; gap: 6px 20px; align-items: center; grid-column: 1 / -1; }
+.calc b { font-size: 18px; }
+.actions-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.actions-bar .btn { flex: 1 1 auto; padding: 8px 12px; font-size: 14px; }
+.kv { display: grid; gap: 4px; margin-bottom: 12px; }
+.box { border: 1px solid var(--cp-border); border-radius: 12px; padding: 10px 12px; margin: 12px 0; }
+.box .row { margin: 8px 0 0; }
+.box-title { font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.due-box { border-color: var(--cp-warning); }
+.offer-book { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+h4 { margin: 16px 0 8px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.log { list-style: none; padding: 0; margin: 0; }
+.log li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--cp-border); }
+.log li > div { flex: 1; min-width: 0; }
+.log-ic { width: 22px; text-align: center; }
+.notes-box { background: var(--cp-surface-soft); border-radius: 10px; padding: 8px 10px; }
+.checklist { list-style: none; padding: 0; margin: 0 0 8px; }
+.checklist li { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--cp-border); }
+.checklist li label { flex: 1; display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.checklist input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--cp-accent); flex: none; }
+.checklist li.done label { text-decoration: line-through; color: var(--cp-text-muted); }
+.progress { height: 8px; background: var(--cp-surface-soft); border-radius: 999px; overflow: hidden; margin-bottom: 8px; border: 1px solid var(--cp-border); }
+.progress > div { height: 100%; background: var(--cp-success); }
+.outcomes { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
+.outcomes .btn { justify-content: flex-start; padding: 9px 10px; }
+.outcomes .btn.active { background: var(--cp-accent); color: #fff; border-color: var(--cp-accent); }
+.slot { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--cp-border); border-radius: 10px; margin-top: 6px; }
+.slot > span { flex: 1; }
+.qr-wrap { display: flex; gap: 14px; align-items: center; padding: 10px; border: 1px solid var(--cp-border); border-radius: 12px; }
+#textQR { flex: none; width: 168px; height: 168px; background: #fff; border-radius: 8px; padding: 4px; display: flex; align-items: center; justify-content: center; }
+#textQR svg { width: 100%; height: 100%; }
+.qr-empty { color: #5c5c5c; font-size: 12px; text-align: center; padding: 8px; }
+#saveNote { white-space: nowrap; }
+#offerMore { margin-top: 8px; }
+
+/* ---------- planner ---------- */
+.plan-grid { display: grid; grid-template-columns: minmax(360px, 460px) 1fr; gap: 16px; }
+#map { height: 640px; border-radius: 16px; }
+.plan-settings > summary { padding: 12px 16px 0; cursor: pointer; font-weight: 600; }
+.plan-ctrl { padding: 14px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.plan-ctrl .full { grid-column: 1 / -1; }
+.stay-row { display: grid; grid-template-columns: auto 150px 1fr auto; gap: 6px; align-items: center; margin-bottom: 6px; font-size: 12px; color: var(--cp-text-muted); }
+.stay-row input { font-size: 14px; min-width: 0; }
+.day { border-top: 1px solid var(--cp-border); padding: 12px 16px; }
+.day h3 { margin: 0 0 6px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.day ol { margin: 6px 0; padding-left: 22px; }
+.day li { margin: 3px 0; }
+.status-line { padding: 8px 16px; font-size: 13px; color: var(--cp-text-muted); }
+.pin { width: 26px; height: 26px; border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; border: 2px solid var(--cp-surface); box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+.home { font-size: 22px; }
+
+/* ---------- settings ---------- */
+.settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 16px; align-items: start; }
+.settings .panel { padding: 16px; }
+.settings h2 { font-size: 15px; margin: 0 0 12px; }
+#tplRows { display: grid; gap: 10px; }
+.step-row { display: grid; grid-template-columns: 1fr 150px auto auto; gap: 6px; margin-bottom: 6px; }
+.step-row input, .step-row select { min-width: 0; }
+.fee td, .fee th { padding: 4px 6px; }
+.fee input { width: 100px; padding: 4px 6px; }
+
+/* ---------- sign in ---------- */
+#authScreen { min-height: 100vh; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.auth-card { width: min(400px, 100%); background: var(--cp-surface); border-radius: 18px; padding: 24px; box-shadow: var(--cp-shadow); border: 1px solid var(--cp-border); }
+.auth-card form { display: grid; gap: 12px; }
+.auth-card input { font-size: 16px; padding: 10px 12px; }
+.auth-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.auth-logo img { width: 44px; height: 44px; border-radius: 10px; }
+.auth-logo h1 { margin: 0; font-size: 20px; }
+.auth-links { display: flex; justify-content: space-between; font-size: 13px; }
+#authMsg { margin-top: 12px; }
+#authSkip { display: block; margin-top: 14px; text-align: center; }
+
+/* ---------- toast ---------- */
+#toast { position: fixed; left: 50%; bottom: calc(24px + var(--safe-b)); transform: translate(-50%, 150%); background: #2a2e37; color: #f0f0f0; border: 1px solid #3a3f4a; padding: 10px 14px; border-radius: 12px; box-shadow: var(--cp-shadow); z-index: 3000; transition: transform .25s ease; display: flex; gap: 12px; align-items: center; max-width: min(560px, 92vw); font-size: 14px; }
+#toast.show { transform: translate(-50%, 0); }
+#toast .btn { background: transparent; color: #9ccbf0; border-color: #3a3f4a; }
+
+/* ---------- phone ---------- */
+@media (max-width: 1000px) { .plan-grid { grid-template-columns: 1fr; } #map { height: 420px; } }
+@media (max-width: 760px) {
+  body { font-size: 15px; }
+  .desktop-only { display: none !important; }
+  .phone-only { display: revert !important; }
+  .claim-cards.phone-only { display: grid !important; }
+  .topbar { padding: 8px 14px; padding-top: calc(8px + var(--safe-t)); gap: 8px; }
+  .topbar h1 { font-size: 17px; }
+  .tabs { display: none; }
+  main { padding: 12px 12px calc(84px + var(--safe-b)); }
+  .bottombar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 1000; background: var(--cp-bg-elevated); border-top: 1px solid var(--cp-border); padding-bottom: var(--safe-b); }
+  .bottombar button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 7px 0 8px; border: 0; background: none; color: var(--cp-text-muted); font: inherit; font-size: 11px; cursor: pointer; }
+  .bottombar button span { font-size: 20px; line-height: 1.1; filter: grayscale(.6); opacity: .8; }
+  .bottombar button.active { color: var(--cp-accent); font-weight: 600; }
+  .bottombar button.active span { filter: none; opacity: 1; }
+  .cards { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .card { padding: 10px 12px; border-radius: 14px; }
+  .card .v { font-size: 20px; }
+  #tab-claims .cards { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; }
+  #tab-claims .cards .card { flex: 0 0 42%; scroll-snap-align: start; }
+  .toolbar { gap: 6px; }
+  .toolbar #search { flex: 1 1 100%; min-width: 0; }
+  .toolbar select { flex: 1 1 calc(50% - 6px); min-width: 0; }
+  .toolbar > .btn.primary { flex: 1 1 100%; }
+  input, select, textarea { font-size: 16px; }
+  .list .item { flex-direction: column; align-items: stretch; gap: 8px; padding: 12px; }
+  .item-actions { justify-content: flex-start; }
+  .item-actions .btn, .ccard-foot .btn { padding: 7px 12px; font-size: 14px; }
+  .ccard-foot .act span { display: none; }
+  dialog, dialog.small-sheet { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; }
+  .dlg-head { padding-top: calc(14px + var(--safe-t)); }
+  .dlg-body { grid-template-columns: 1fr; padding: 14px 16px; }
+  .dlg-pane { padding: 12px 16px 18px; }
+  #dlgTabs { margin: 10px 16px 0; }
+  .grid2 { grid-template-columns: 1fr 1fr; }
+  .settings { grid-template-columns: 1fr; }
+  .plan-ctrl { grid-template-columns: 1fr 1fr; }
+  .stay-row { grid-template-columns: 1fr auto; }
+  .stay-row input[type=date] { grid-column: 1 / -1; }
+  .step-row { grid-template-columns: 1fr auto auto; }
+  .step-row select { grid-column: 1 / -1; grid-row: 2; }
+  .today-head h2 { font-size: 18px; }
+}
+@media print {
+  .topbar, .bottombar, .toolbar, .plan-ctrl, .plan-settings, #map, .noprint { display: none !important; }
+  body { background: white; }
+  .plan-grid { display: block; }
+}
+</style>
+</head>
+<body>
+
+<!-- APP -->
+<div id="app">
+<header class="topbar">
+  <h1>Adjuster Claim Tracker</h1>
+  <nav class="tabs">
+    <button data-tab="today" class="active">Today</button>
+    <button data-tab="claims">Claims</button>
+    <button data-tab="plan">Route Planner</button>
+    <button data-tab="settings">Settings</button>
+  </nav>
+  <div class="spacer"></div>
+  <span class="muted small desktop-only" id="saveNote">Saved on this computer</span>
+  <button class="btn small desktop-only" id="backupBtn" title="Back up your claims now"></button>
+  <button class="btn small icon" id="themeBtn" title="Switch light / dark mode"></button>
+</header>
+
+<main>
+  <!-- TODAY -->
+  <section class="tab active" id="tab-today">
+    <div class="today-head">
+      <div><h2 id="todayTitle"></h2><div class="muted small" id="todaySub"></div></div>
+      <button class="btn primary" data-new-claim>+ Add claim</button>
+    </div>
+    <div class="cards" id="todayCards"></div>
+    <div id="todayLists"></div>
+  </section>
+
+  <!-- CLAIMS -->
+  <section class="tab" id="tab-claims">
+    <div class="small muted" id="cardsNote" style="margin:0 0 8px"></div>
+    <div class="cards" id="cards"></div>
+    <div class="toolbar">
+      <button class="btn primary" data-new-claim>+ Add claim</button>
+      <button class="btn desktop-only" id="syncAdstrat" title="Pull in claims from AdStrat">⟳ Sync from AdStrat</button>
+      <input id="search" type="search" placeholder="Search insured, claim #, notes, address…">
+      <select id="fEvent"><option value="">All events</option></select>
+      <select id="fStatus"></select>
+      <select id="fSort" class="phone-only" aria-label="Sort by">
+        <option value="next">Sort: next follow-up</option><option value="days">Sort: days since update</option><option value="prio">Sort: priority</option>
+        <option value="inspectDate">Sort: inspection date</option><option value="insured">Sort: insured</option><option value="status">Sort: status</option>
+      </select>
+      <span class="spacer"></span>
+      <span class="muted small" id="countNote"></span>
+    </div>
+    <div class="small" id="syncNote" style="margin:-4px 0 10px;color:var(--cp-text-soft)"></div>
+    <div class="panel tablewrap desktop-only">
+      <table id="claimsTable">
+        <thead><tr>
+          <th data-k="event">Event</th>
+          <th data-k="insured">Insured</th>
+          <th data-k="claimNo">Claim #</th>
+          <th data-k="reserves" class="num">Reserves</th>
+          <th data-k="biller" class="num">Biller</th>
+          <th data-k="pay" class="num">Pay</th>
+          <th data-k="status">Status</th>
+          <th data-k="prio">Priority</th>
+          <th data-k="inspectDate">Inspection</th>
+          <th data-k="next">Next contact</th>
+          <th data-k="days" class="num">Days Since Update</th>
+          <th data-k="lastUpdate">Last Update</th>
+          <th data-k="notes">Notes</th>
+        </tr></thead>
+        <tbody></tbody>
+        <tfoot></tfoot>
+      </table>
+    </div>
+    <div class="claim-cards phone-only" id="claimCards"></div>
+    <div class="empty" id="emptyNote" style="display:none">No claims yet. Tap <b>+ Add claim</b>, or import your old spreadsheet under <b>Settings</b>.</div>
+  </section>
+
+  <!-- PLANNER -->
+  <section class="tab" id="tab-plan">
+    <div class="plan-grid">
+      <div class="panel">
+        <details class="plan-settings" open>
+          <summary>Planner settings</summary>
+          <div class="plan-ctrl">
+            <label class="f full">Where you're staying (start/end each day)
+              <input id="pLodging" placeholder="e.g. 123 Main St, Asheville, NC" autocomplete="street-address">
+            </label>
+            <div class="full" id="stayBox">
+              <div id="stayRows"></div>
+              <button type="button" class="btn small" id="addStay">+ Staying somewhere else on a later night</button>
+              <div class="muted small" id="stayHelp" style="margin-top:4px;display:none">That day starts where you were and ends at the new place. Every day after starts and ends there, until your next move.</div>
+            </div>
+            <label class="f">First inspection day <input type="date" id="pStart"></label>
+            <label class="f">Days off
+              <select id="pSkip"><option value="none">Work every day</option><option value="sun">Skip Sundays</option><option value="wknd">Skip Sat &amp; Sun</option></select>
+            </label>
+            <label class="f">Min inspections / day (target) <input type="number" id="pMin" min="1" max="20" inputmode="numeric"></label>
+            <label class="f">Max inspections / day <input type="number" id="pMax" min="1" max="20" inputmode="numeric"></label>
+            <label class="f">Max inspections / week <input type="number" id="pWeek" min="0" max="120" inputmode="numeric" placeholder="0 = no limit"></label>
+            <label class="f">Buffer between stops (min) <input type="number" id="pGap" min="0" step="5" inputmode="numeric" title="Extra time after each inspection for notes, photos and parking"></label>
+            <label class="f">Extra-claim detour limit (min) <input type="number" id="pExtra" min="0" step="5" inputmode="numeric"></label>
+            <div class="muted small" style="align-self:end;padding-bottom:8px">After hitting the min, add claims (up to max) that add this many minutes of driving or less.</div>
+            <div class="f" style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--cp-text-muted)">Start each day by
+              <span style="display:flex;gap:6px">
+                <select id="pStartMode" aria-label="Start time type" style="flex:1;min-width:0;font-size:14px"><option value="leave">Leaving lodging at</option><option value="first">First inspection at</option></select>
+                <input type="time" id="pLeave" aria-label="Start time" style="font-size:14px">
+              </span>
+            </div>
+            <label class="f">Back by <input type="time" id="pBack"></label>
+            <label class="f">Minutes per inspection <input type="number" id="pInspect" min="10" step="5" inputmode="numeric"></label>
+            <div></div>
+            <div class="full">
+              <div class="small muted" style="margin-bottom:4px">Blocked dates (no inspections)</div>
+              <div class="row" style="margin:0"><input type="date" id="pBlockDate"><button type="button" class="btn small" id="pBlockAdd">+ Block date</button></div>
+              <div id="pBlocked" class="chips"></div>
+            </div>
+            <label class="f full check">
+              <input type="checkbox" id="pReplan"> Re-plan booked appointments too (ignore their current dates and times)
+            </label>
+            <div class="full muted small">Claims with an inspection date on or after the first inspection day count as booked. With a time, they stay fixed and the day is built around them. With only a date, they stay on that day. Urgent and high-priority claims are planned first.</div>
+          </div>
+        </details>
+        <div class="plan-ctrl" style="padding-top:0">
+          <div class="full row" style="margin:0">
+            <button class="btn primary" id="buildPlan">Build best schedule</button>
+            <button class="btn" id="applyPlan" disabled>Apply dates to claims</button>
+            <button class="btn desktop-only" id="printPlan" disabled>Print</button>
+          </div>
+        </div>
+        <div class="status-line" id="planStatus">Add addresses to your uninspected claims, enter where you're staying, then tap Build.</div>
+        <div id="planDays"></div>
+      </div>
+      <div class="noprint"><div id="map" class="panel"></div></div>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="tab" id="tab-settings">
+    <div class="settings">
+      <div class="panel">
+        <h2>You (for text messages)</h2>
+        <div class="grid2">
+          <label class="f">Your name <input id="meName" placeholder="e.g. Josh" autocomplete="name"></label>
+          <label class="f">Your cell <input id="mePhone" type="tel" placeholder="(555) 555-5555" autocomplete="tel"></label>
+          <label class="f">Calling hours start <input type="time" id="callOpen"></label>
+          <label class="f">Calling hours end <input type="time" id="callClose"></label>
+        </div>
+        <p class="muted small">Follow-ups only land inside calling hours. After no answer, the next try is 2, 4, 8, 16, then 24 hours later. After a voicemail or a text with no reply, it's 24 hours.</p>
+        <h2 style="margin-top:16px">Offering times</h2>
+        <div class="grid2">
+          <label class="f">Earliest day to offer
+            <select id="offStart"><option value="0">Today</option><option value="1">Tomorrow</option><option value="2">2 days out</option><option value="3">3 days out</option></select>
+          </label>
+          <label class="f">Look ahead (work days) <input type="number" id="offDays" min="1" max="30" inputmode="numeric"></label>
+          <label class="f">Time steps
+            <select id="offStep"><option value="15">Every 15 min</option><option value="30">Every 30 min</option><option value="60">On the hour</option></select>
+          </label>
+        </div>
+        <p class="muted small">Uses your Route Planner hours, inspection length, buffer, days off, blocked dates and daily/weekly limits.</p>
+      </div>
+
+      <div class="panel">
+        <h2>Text templates</h2>
+        <p class="muted small" style="margin-top:0">You can use: {first} {insured} {street} {address} {claimNo} {apptDay} {apptTime} {myName} {myPhone}. The offer text also needs {options}.</p>
+        <div id="tplRows"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Report checklist</h2>
+        <p class="muted small" style="margin-top:0">Steps shown on each claim's Report tab. Steps linked to a status move the claim forward when ticked.</p>
+        <div id="stepRows"></div>
+        <div class="row" style="margin-top:8px"><input id="newStep" placeholder="New step"><button class="btn" id="addStep">Add</button><button class="btn small" id="resetSteps">Reset</button></div>
+      </div>
+
+      <div class="panel">
+        <h2>Pay formula</h2>
+        <div class="row">Pay = (((Biller × <input type="number" step="0.01" id="sA" style="width:70px">) − $<input type="number" step="0.5" id="sB" style="width:60px">) × <input type="number" step="0.01" id="sC" style="width:70px">) × <input type="number" step="0.01" id="sD" style="width:70px"></div>
+        <div class="muted small" id="payCheck"></div>
+        <h2 style="margin-top:20px">Events</h2>
+        <div class="muted small" style="margin-bottom:8px">Date of loss decides which FEMA fee schedule applies. Only the 2023 schedule (DOL on/after 10/1/2023) is loaded.</div>
+        <table class="fee"><thead><tr><th>Event</th><th>Date of loss</th><th></th></tr></thead><tbody id="eventRows"></tbody></table>
+        <div class="row" style="margin-top:8px"><input id="newEvName" placeholder="Event name"><input type="date" id="newEvDol"><button class="btn" id="addEvent">Add</button></div>
+      </div>
+
+      <div class="panel">
+        <h2>2023 NFIP Standard Adjuster Fee Schedule</h2>
+        <div class="muted small" style="margin-bottom:8px">Claim range is based on <b>gross loss</b>. If you leave Gross Loss blank on a claim, Reserves is used.</div>
+        <div class="tablewrap"><table class="fee"><thead><tr><th>Claim range</th><th>Flat fee / %</th><th>Minimum</th></tr></thead><tbody id="feeRows"></tbody></table></div>
+        <div class="row" style="margin-top:10px">Supplemental with no amount: $<input type="number" id="sSupp" style="width:90px"></div>
+        <button class="btn small" id="resetFees">Reset to 2023 FEMA schedule</button>
+      </div>
+
+      <div class="panel" id="asPanel">
+        <h2>AdStrat sync</h2>
+        <div id="extOn" style="display:none">
+          <p style="margin-top:0"><span style="color:var(--cp-success);font-weight:600">✓ Chrome extension connected.</span> Click <b>⟳ Sync from AdStrat</b> on the Claims tab any time you're signed in to AdStrat in Chrome.</p>
+        </div>
+        <div id="extOff">
+          <p class="muted small" style="margin-top:0">Install the Chrome extension once, and the Sync button pulls straight from AdStrat whenever you're signed in there. Your AdStrat password is never stored, and nothing in AdStrat is ever changed.</p>
+          <ol class="small" style="padding-left:18px;margin:0 0 10px">
+            <li>In Chrome, go to <b>chrome://extensions</b> and turn on <b>Developer mode</b> (top right).</li>
+            <li>Click <b>Load unpacked</b> and choose this folder:<br><code id="extPath" style="user-select:all;word-break:break-all">claim-tracker-adstrat-extension (next to this tracker file)</code></li>
+            <li>On the extension's card, click <b>Details</b> and turn on <b>Allow access to file URLs</b>.</li>
+            <li>Refresh this page. This panel will say <b>connected</b>.</li>
+          </ol>
+          <details class="small"><summary style="cursor:pointer">No extension? Use the bookmark instead</summary>
+            <ol style="padding-left:18px;margin:6px 0 0">
+              <li>Drag this button onto your Chrome bookmarks bar (Ctrl+Shift+B shows the bar):<br>
+                <a id="asBookmarklet" class="btn primary" style="display:inline-block;margin:6px 0;text-decoration:none">📋 Copy AdStrat claims</a></li>
+              <li>On your AdStrat claims list, click the bookmark, then <b>Copy for tracker</b>.</li>
+              <li>Back here, click <b>⟳ Sync from AdStrat</b>.</li>
+            </ol>
+          </details>
+        </div>
+        <p class="muted small">New claims are added. Claims already in the tracker are matched by AdStrat ID, or by claim # and insured name the first time, and updated: reserves, inspection date, status (forward only) and AdStrat stage. Your notes, contact log and Paid/Closed statuses are never changed.</p>
+        <div class="muted small" id="asLast"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Import / export</h2>
+        <p class="muted small" style="margin-top:0">Import a CSV, or copy rows from Excel (with the header row) and paste them below. Recognized columns: Event, Insured, Claim #, Type, Reserves, Gross Loss, Biller, Pay, Status, Priority, Last Update, Inspection Date, Address, Phone, Cell, Notes.</p>
+        <textarea id="pasteBox" rows="5" style="width:100%" placeholder="Paste from Excel here…"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="btn primary" id="importPaste">Import pasted rows</button>
+          <label class="btn" style="display:inline-block">Import CSV file <input type="file" id="csvFile" accept=".csv,.txt,.tsv" hidden></label>
+          <button class="btn" id="exportCsv">Export to Excel (CSV)</button>
+        </div>
+        <div class="row"><button class="btn danger" id="clearAll">Delete all claims</button></div>
+        <div class="muted small" id="importNote"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Backups</h2>
+        <p class="muted small" style="margin-top:0" id="bkIntro"></p>
+        <div id="bkStatus" style="margin-bottom:10px"></div>
+        <div id="bkFolder">
+          <div class="row">
+            <button class="btn primary" id="bkPick">Choose backup folder…</button>
+            <button class="btn" id="bkOff">Turn off auto-backup</button>
+          </div>
+          <p class="muted small">After each change the tracker saves <b>claim-tracker-backup-latest.json</b> plus one dated copy per day, keeping the last 30 days.</p>
+        </div>
+        <div class="row">
+          <button class="btn" id="bkNow">Back up now</button>
+          <button class="btn" id="backupJson">Download backup file</button>
+          <label class="btn" style="display:inline-block">Restore from backup file <input type="file" id="jsonFile" accept=".json" hidden></label>
+        </div>
+        <div class="row">Remind me if not backed up in <input type="number" id="bkDays" min="1" max="60" style="width:70px"> days</div>
+        <div class="muted small" id="bkNote"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<nav class="bottombar">
+  <button data-tab="today" class="active"><span>🏠</span>Today</button>
+  <button data-tab="claims"><span>📋</span>Claims</button>
+  <button data-tab="plan"><span>🗺️</span>Plan</button>
+  <button data-tab="settings"><span>⚙️</span>Settings</button>
+</nav>
+</div>
+
+<!-- CLAIM SHEET -->
+<dialog id="dlg" class="sheet">
+  <div class="dlg-head">
+    <div class="dlg-title"><div id="dlgTitle">Claim</div><div class="muted small" id="dlgSub"></div></div>
+    <button type="button" class="btn icon" id="closeDlg" aria-label="Close">✕</button>
+  </div>
+  <div class="seg" id="dlgTabs">
+    <button type="button" data-pane="activity" class="active">Activity</button>
+    <button type="button" data-pane="details">Details</button>
+    <button type="button" data-pane="report">Report</button>
+  </div>
+  <div class="dlg-pane" id="pane-activity"></div>
+  <div class="dlg-pane" id="pane-report" hidden></div>
+  <form method="dialog" id="claimForm" class="dlg-pane" hidden>
+    <div class="dlg-body">
+      <label class="f">Event <input name="event" list="eventList" required></label>
+      <label class="f">Insured <input name="insured" required></label>
+      <label class="f">Claim # <input name="claimNo"></label>
+      <label class="f">Claim type
+        <select name="type">
+          <option value="standard">Standard</option>
+          <option value="supplemental">Supplemental</option>
+          <option value="cwop">Closed Without Payment (CWOP)</option>
+          <option value="withdrawn">Claim Withdrawn</option>
+          <option value="erroneous">Erroneous Assignment</option>
+        </select>
+      </label>
+      <label class="f">Status <select name="status"></select></label>
+      <label class="f">Priority <select name="priority"><option value="urgent">Urgent</option><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></select></label>
+      <label class="f">Reserves <input name="reserves" inputmode="decimal" placeholder="$0.00"></label>
+      <label class="f">Gross loss (optional) <input name="grossLoss" inputmode="decimal" placeholder="blank = use reserves"></label>
+      <label class="f">Biller override (optional) <input name="billerOverride" inputmode="decimal" placeholder="blank = FEMA schedule"></label>
+      <div class="calc"><span>Biller <b id="cBiller">$0</b></span><span>Your pay <b id="cPay">$0.00</b></span><span class="muted small" id="cWhy"></span></div>
+      <label class="f full">Property address <input name="address" placeholder="Street, City, State ZIP" autocomplete="off"></label>
+      <label class="f">Mobile (for texts) <input name="cell" type="tel"></label>
+      <label class="f">Other phone <input name="phone" type="tel"></label>
+      <label class="f">Inspection date <input type="date" name="inspectDate"></label>
+      <label class="f">Inspection time <input type="time" name="inspectTime"></label>
+      <label class="f">Insured available from <input type="time" name="availFrom"></label>
+      <label class="f">Insured available until <input type="time" name="availTo" title="The inspection will be planned to finish by this time"></label>
+      <label class="f">Last update <input type="date" name="lastUpdate"></label>
+      <div></div>
+      <label class="f full">Notes <textarea name="notes" rows="3"></textarea></label>
+      <div class="full small muted" id="asInfo"></div>
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="btn danger" id="delClaim">Delete</button>
+      <button type="button" class="btn" id="touchToday">Updated today</button>
+      <span class="spacer"></span>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+<datalist id="eventList"></datalist>
+
+<!-- LOG CONTACT -->
+<dialog id="logDlg" class="sheet small-sheet">
+  <form method="dialog" id="logForm">
+    <div class="dlg-head"><div class="dlg-title"><div>Log contact</div><div class="muted small" id="logWho"></div></div><button type="button" class="btn icon" data-close aria-label="Close">✕</button></div>
+    <div class="dlg-body one">
+      <div class="seg" id="logMethod">
+        <button type="button" data-v="call" class="active">📞 Call</button><button type="button" data-v="text">💬 Text</button><button type="button" data-v="email">✉️ Email</button><button type="button" data-v="person">🧍 In person</button>
+      </div>
+      <div class="outcomes" id="logOutcome"></div>
+      <div id="logSched" class="grid2" hidden>
+        <label class="f">Inspection date <input type="date" id="logDate"></label>
+        <label class="f">Time <input type="time" id="logTime"></label>
+      </div>
+      <label class="f" id="logNextWrap">Next follow-up <input type="datetime-local" id="logNext"></label>
+      <div class="muted small" id="logNextHint"></div>
+      <label class="f">Note (optional) <textarea id="logNote" rows="2"></textarea></label>
+    </div>
+    <div class="dlg-foot"><span class="spacer"></span><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary" id="logSave" disabled>Save</button></div>
+  </form>
+</dialog>
+
+<!-- TEXT -->
+<dialog id="textDlg" class="sheet small-sheet">
+  <div class="dlg-head"><div class="dlg-title"><div id="textTitle">Text</div><div class="muted small" id="textWho"></div></div><button type="button" class="btn icon" data-close aria-label="Close">✕</button></div>
+  <div class="dlg-body one">
+    <div id="offerBox" hidden>
+      <div class="status-line" id="offerStatus" style="padding:0"></div>
+      <div id="offerSlots"></div>
+      <details id="offerMore"><summary class="small">Other openings</summary><div id="offerAlts" class="chips"></div></details>
+    </div>
+    <div class="seg wrap" id="tplPick"></div>
+    <label class="f">Message <textarea id="textBody" rows="7"></textarea></label>
+    <label class="f">Send to <input id="textTo" type="tel"></label>
+    <div class="qr-wrap">
+      <div id="textQR"></div>
+      <div class="small"><b>Send it from your phone:</b> point your phone's camera at this code and tap the link. Messages opens with the number and text filled in. Or click <b>Copy</b> and paste it into a text.</div>
+    </div>
+    <div class="muted small" id="textHint"></div>
+  </div>
+  <div class="dlg-foot">
+    <button type="button" class="btn" id="textCopy">Copy</button>
+    <span class="spacer"></span>
+    <button type="button" class="btn" data-close>Cancel</button>
+    <button type="button" class="btn primary" id="textSent">✓ I sent it</button>
+  </div>
+</dialog>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
+<script>
+// ===== core.js =====
+'use strict';
+// ---------- constants ----------
+const STORE = 'adjusterClaimTracker.v1';
+const STATUSES = ['Need to Contact', 'Contacted', 'Scheduled', 'Inspected', 'In Progress', 'ER', 'Prelim Sent', 'Pending Signed POL', 'Final', 'Revision Request', 'Accepted', 'Paid', 'Closed'];
+const UNINSPECTED = ['Need to Contact', 'Contacted', 'Scheduled'];
+const DONE = ['Closed', 'Paid'];
+const STATUS_ALIASES = { 'assigned': 'Need to Contact', 'need to contact': 'Need to Contact', 'working': 'In Progress', 'final sent': 'Final', 'pending pol': 'Pending Signed POL', 'pending signed pol': 'Pending Signed POL', 'revision': 'Revision Request', 'revisions': 'Revision Request' };
+const normStatus = s => { const k = String(s || '').trim().toLowerCase(); return STATUS_ALIASES[k] || STATUSES.find(x => x.toLowerCase() === k) || String(s || '').trim(); };
+const statusClass = s => 'st-' + String(s).toLowerCase().replace(/[^a-z]+/g, '-');
+const FEE_2023 = {
+  erroneous: 125, withdrawn: 125, cwop: 510,
+  tiers: [
+    { max: 1000, flat: 680 }, { max: 5000, flat: 1035 }, { max: 10000, flat: 1340 },
+    { max: 15000, flat: 1520 }, { max: 25000, flat: 1650 }, { max: 35000, flat: 1910 },
+    { max: 50000, flat: 2235 },
+    { max: 150000, pct: 4.5, min: 2350 }, { max: 250000, pct: 4.3, min: 6750 },
+    { max: 350000, pct: 4.0, min: 10750 }, { max: 550000, pct: 3.5, min: 14000 },
+    { max: 1000000, pct: 3.2, min: 19250 }, { max: null, pct: 2.8, min: 32000 }
+  ]
+};
+const PRIORITIES = [['urgent', 'Urgent'], ['high', 'High'], ['normal', 'Normal'], ['low', 'Low']];
+const PRIO_RANK = { urgent: 3, high: 2, normal: 1, low: 0 };
+const prioRank = p => PRIO_RANK[p] ?? 1;
+const DEFAULT_STEPS = [
+  { key: 'photos', label: 'Photos uploaded & labeled' },
+  { key: 'captions', label: 'Photo captions written' },
+  { key: 'estimate', label: 'Estimate written' },
+  { key: 'prelim', label: 'Prelim report sent', status: 'Prelim Sent' },
+  { key: 'pol', label: 'Signed POL received' },
+  { key: 'final', label: 'Final report sent', status: 'Final' }
+];
+const TEMPLATE_NAMES = { offer: 'Offer 3 times', confirm: 'Confirm appointment', onway: 'On my way', intro: "Couldn't reach you" };
+const DEFAULT_TEMPLATES = {
+  offer: "Hi {first}, this is {myName}, the flood adjuster assigned to your claim. I'd like to schedule your property inspection. Would one of these times work?\n{options}\nJust reply 1, 2 or 3, or tell me a time that works better.",
+  confirm: "Hi {first}, this is {myName}, your flood adjuster. Confirming your inspection on {apptDay} at {apptTime} at {street}. Please reply to confirm, or let me know if you need a different time.",
+  onway: "Hi {first}, this is {myName}, your flood adjuster. I'm on my way to {street} and should be there in about 20 minutes.",
+  intro: "Hi {first}, this is {myName}, the flood adjuster assigned to your claim. I tried to reach you to set up your inspection. Please call or text me back at {myPhone}."
+};
+const OUTCOMES = {
+  reached: { label: 'Reached', icon: '✅' },
+  no_answer: { label: 'No answer', icon: '📵' },
+  voicemail: { label: 'Left voicemail', icon: '📼' },
+  text_sent: { label: 'Texted', icon: '💬' },
+  offered: { label: 'Offered times', icon: '🗓️' },
+  callback: { label: 'Call back later', icon: '⏰' },
+  scheduled: { label: 'Scheduled', icon: '📌' },
+  confirm_sent: { label: 'Confirmation sent', icon: '📨' },
+  confirmed: { label: 'Confirmed', icon: '👍' },
+  no_show: { label: 'No-show', icon: '🚫' },
+  bad_number: { label: 'Bad number', icon: '❌' },
+  note: { label: 'Note', icon: '📝' }
+};
+const METHODS = { call: '📞 Call', text: '💬 Text', email: '✉️ Email', person: '🧍 In person' };
+const UNANSWERED = ['no_answer', 'voicemail', 'text_sent', 'offered'];
+const ANSWERED = ['reached', 'scheduled', 'callback', 'confirmed'];
+const APPT = { scheduled: 'Scheduled', confirmed: 'Confirmed', reschedule: 'Needs reschedule' };
+
+// ---------- helpers ----------
+const clone = o => JSON.parse(JSON.stringify(o));
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = v => { if (v === null || v === undefined) return 0; const n = parseFloat(String(v).replace(/[$,\s]/g, '')); return isFinite(n) ? n : 0; };
+const hasNum = v => v !== null && v !== undefined && String(v).replace(/[$,\s-]/g, '') !== '' && isFinite(parseFloat(String(v).replace(/[$,\s]/g, '')));
+const usd0 = n => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+const usd2 = n => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
+const fmtDate = iso => { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${+m}/${+d}/${y.slice(2)}`; };
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+const isoOf = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const todayISO = () => isoOf(new Date());
+const addDays = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return isoOf(d); };
+const dayShort = iso => new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
+const dayLong = iso => new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+function parseDate(s) {
+  if (!s) return '';
+  s = String(s).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (m) { let y = +m[3]; if (y < 100) y += 2000; return `${y}-${String(m[1]).padStart(2, '0')}-${String(m[2]).padStart(2, '0')}`; }
+  if (/^\d{5}$/.test(s)) { const d = new Date(Date.UTC(1899, 11, 30) + (+s) * 864e5); return d.toISOString().slice(0, 10); }
+  return '';
+}
+const daysSince = iso => iso ? Math.floor((new Date(todayISO() + 'T12:00:00') - new Date(iso + 'T12:00:00')) / 864e5) : null;
+const hm = t => { const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
+const hhmm = mins => { mins = Math.round(mins); return String(Math.floor(mins / 60)).padStart(2, '0') + ':' + String(mins % 60).padStart(2, '0'); };
+const fmtClock = mins => { mins = Math.round(mins); let h = Math.floor(mins / 60), m = mins % 60; const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${h}:${String(m).padStart(2, '0')} ${ap}`; };
+const parseTime = s => {
+  const m = /^\s*(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?m?\.?\s*$/i.exec(String(s || ''));
+  if (!m) return '';
+  let h = +m[1]; const ap = (m[3] || '').toLowerCase();
+  if (ap === 'p' && h < 12) h += 12; if (ap === 'a' && h === 12) h = 0;
+  return h > 23 ? '' : String(h).padStart(2, '0') + ':' + (m[2] || '00');
+};
+const winText = c => c.availFrom && c.availTo ? `${fmtClock(hm(c.availFrom))}–${fmtClock(hm(c.availTo))}` : c.availFrom ? `after ${fmtClock(hm(c.availFrom))}` : c.availTo ? `until ${fmtClock(hm(c.availTo))}` : '';
+const fmtPhone = s => { const d = String(s || '').replace(/\D/g, ''); return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : String(s || '').trim(); };
+const fmtWhen = iso => {
+  if (!iso) return '';
+  const d = new Date(iso), t = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const day = isoOf(d), today = todayISO();
+  if (day === today) return 'today ' + t;
+  if (day === addDays(today, 1)) return 'tomorrow ' + t;
+  if (day === addDays(today, -1)) return 'yesterday ' + t;
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' }) + ' ' + t;
+};
+const ago = iso => {
+  if (!iso) return 'never';
+  const m = Math.round((Date.now() - new Date(iso)) / 60000);
+  if (m < 1) return 'just now'; if (m < 60) return m + ' min ago';
+  const h = Math.round(m / 60); if (h < 24) return h + ' hr' + (h > 1 ? 's' : '') + ' ago';
+  const d = Math.round(h / 24); return d + ' day' + (d > 1 ? 's' : '') + ' ago';
+};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isPhone = () => matchMedia('(max-width: 760px)').matches;
+function toast(msg, ms = 3200) {
+  const t = $('#toast'); t.innerHTML = msg; t.classList.add('show');
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+// ---------- state ----------
+function defaults() {
+  return {
+    claims: [],
+    settings: {
+      pay: { a: 0.7, b: 5, c: 0.75, d: 0.95 },
+      supplementalFee: 510,
+      fees: clone(FEE_2023),
+      events: [{ name: 'Helene', dol: '2024-09-26' }, { name: 'Milton', dol: '2024-10-09' }],
+      lodging: { address: '', lat: null, lng: null },
+      stays: [],
+      plan: { minStops: 4, maxStops: 6, extraMin: 20, startMode: 'leave', leave: '08:00', back: '18:00', inspectMin: 60, skip: 'sun', replan: false, gap: 0, weekMax: 0, blocked: [] },
+      offer: { startIn: 1, days: 7, step: 30 },
+      contact: { open: '08:30', close: '20:00' },
+      me: { name: '', phone: '' },
+      templates: clone(DEFAULT_TEMPLATES),
+      steps: clone(DEFAULT_STEPS)
+    },
+    lastPlan: null
+  };
+}
+function normalizeSettings(s) {
+  const D = defaults().settings;
+  s = Object.assign({}, D, s || {});
+  for (const k of ['pay', 'plan', 'offer', 'contact', 'me', 'templates', 'lodging']) s[k] = Object.assign({}, D[k], s[k] || {});
+  if (!Array.isArray(s.plan.blocked)) s.plan.blocked = [];
+  if (!Array.isArray(s.steps) || !s.steps.length) s.steps = clone(DEFAULT_STEPS);
+  if (!Array.isArray(s.events)) s.events = [];
+  if (!Array.isArray(s.stays)) s.stays = [];
+  if (!s.fees || !Array.isArray(s.fees.tiers)) s.fees = clone(FEE_2023);
+  return s;
+}
+function normalizeClaim(c) {
+  c.status = normStatus(c.status) || 'Need to Contact';
+  if (!c.priority) c.priority = 'normal';
+  if (!Array.isArray(c.contacts)) c.contacts = [];
+  if (!Array.isArray(c.revisions)) c.revisions = [];
+  if (!c.progress || typeof c.progress !== 'object') c.progress = {};
+  if (c.appt === undefined) c.appt = c.inspectDate && c.status === 'Scheduled' ? 'scheduled' : '';
+  return c;
+}
+function normalizeState(s) {
+  s = s && typeof s === 'object' ? s : defaults();
+  s.settings = normalizeSettings(s.settings);
+  s.claims = Array.isArray(s.claims) ? s.claims.filter(c => c && c.id).map(normalizeClaim) : [];
+  if (s.lastPlan === undefined) s.lastPlan = null;
+  return s;
+}
+function loadState() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(STORE)); } catch { }
+  return normalizeState(s);
+}
+let state = loadState();
+const S = () => state.settings;
+const claimById = id => state.claims.find(c => c.id === id);
+
+function persistLocal() {
+  try {
+    localStorage.setItem(STORE, JSON.stringify(state));
+    $('#saveNote').textContent = 'Saved on this computer · ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  } catch (e) { $('#saveNote').textContent = 'Could not save: ' + e.message; toast('Could not save on this computer: ' + esc(e.message), 6000); }
+}
+const afterSave = [];
+// Every change goes through save(): store locally, then run hooks (auto-backup).
+function save() {
+  persistLocal();
+  afterSave.forEach(f => { try { f(); } catch (e) { console.error(e); } });
+}
+
+// ---------- fee + pay ----------
+function eventDol(name) { const e = S().events.find(x => x.name.toLowerCase() === String(name || '').trim().toLowerCase()); return e ? e.dol : null; }
+function feeFor(c) {
+  const f = S().fees;
+  if (hasNum(c.billerOverride)) return { fee: num(c.billerOverride), why: 'Override' };
+  if (c.type === 'erroneous') return { fee: f.erroneous, why: 'Erroneous assignment' };
+  if (c.type === 'withdrawn') return { fee: f.withdrawn, why: 'Claim withdrawn' };
+  if (c.type === 'cwop') return { fee: f.cwop, why: 'CWOP' };
+  const loss = hasNum(c.grossLoss) ? num(c.grossLoss) : num(c.reserves);
+  if (loss <= 0) {
+    if (c.type === 'supplemental') return { fee: num(S().supplementalFee), why: 'Supplemental flat' };
+    return { fee: 0, why: 'Enter reserves' };
+  }
+  for (const t of f.tiers) {
+    if (t.max === null || loss <= t.max) {
+      if (t.flat !== undefined) return { fee: t.flat, why: `Flat tier ≤ ${usd0(t.max)}` };
+      const raw = loss * t.pct / 100;
+      const fee = Math.max(raw, t.min);
+      return { fee, why: `${t.pct}% of ${usd0(loss)}${fee === t.min && raw < t.min ? ' (minimum)' : ''}` };
+    }
+  }
+  return { fee: 0, why: '' };
+}
+function payFor(fee) {
+  if (!fee) return 0;
+  const p = S().pay;
+  return Math.round((((fee * p.a) - p.b) * p.c) * p.d * 100) / 100;
+}
+function enrich(c) {
+  const { fee, why } = feeFor(c);
+  const dol = eventDol(c.event);
+  const oldSchedule = dol && dol < '2023-10-01' && !hasNum(c.billerOverride);
+  const fu = followUp(c);
+  return Object.assign({}, c, {
+    biller: fee, why, pay: payFor(fee), days: DONE.includes(c.status) ? null : daysSince(c.lastUpdate), oldSchedule,
+    fu, nextSort: fu ? fu.at : null, prio: prioRank(c.priority), openRev: (c.revisions || []).filter(r => !r.done).length
+  });
+}
+
+// ---------- contact log + follow-ups ----------
+const byAtDesc = (a, b) => String(b.at).localeCompare(String(a.at));
+const lastContact = c => (c.contacts || []).filter(x => x.outcome !== 'note').sort(byAtDesc)[0] || null;
+function unansweredCount(c) {
+  let n = 0;
+  for (const x of (c.contacts || []).slice().sort(byAtDesc)) {
+    if (UNANSWERED.includes(x.outcome)) n++;
+    else if (ANSWERED.includes(x.outcome)) break;
+  }
+  return n;
+}
+// Follow-up timing from Brian's M-Core retry policy: no answer waits 2, 4, 8, 16, then 24 hours;
+// a voicemail or unanswered text waits 24 hours; follow-ups only land inside calling hours.
+function retryHours(outcome, attempt) {
+  if (outcome === 'no_answer') return Math.min(2 ** Math.max(1, attempt), 24);
+  if (outcome === 'voicemail' || outcome === 'text_sent' || outcome === 'offered') return 24;
+  return null;
+}
+function inCallingHours(d = new Date()) {
+  const m = d.getHours() * 60 + d.getMinutes();
+  return m >= hm(S().contact.open) && m < hm(S().contact.close);
+}
+function clampToCallingHours(d) {
+  const open = hm(S().contact.open), close = hm(S().contact.close), m = d.getHours() * 60 + d.getMinutes();
+  if (m < open) d.setHours(Math.floor(open / 60), open % 60, 0, 0);
+  else if (m >= close) { d.setDate(d.getDate() + 1); d.setHours(Math.floor(open / 60), open % 60, 0, 0); }
+  return d;
+}
+function advanceStatus(c, s) {
+  if (!DONE.includes(c.status) && STATUSES.indexOf(s) > STATUSES.indexOf(c.status)) c.status = s;
+}
+// Records a call/text/etc. and applies what it means for the claim (status, appointment, next follow-up).
+function addContact(c, { method = 'call', outcome, note = '', nextAt, date, time }) {
+  const e = { id: uid(), at: new Date().toISOString(), method, outcome, note: note || '' };
+  c.contacts = c.contacts || [];
+  c.contacts.push(e);
+  c.lastUpdate = todayISO();
+  if (nextAt !== undefined) c.nextAt = nextAt || null;
+  else {
+    const h = retryHours(outcome, unansweredCount(c));
+    if (h) c.nextAt = clampToCallingHours(new Date(Date.now() + h * 3600e3)).toISOString();
+    else if (['reached', 'scheduled', 'confirmed', 'bad_number'].includes(outcome)) c.nextAt = null;
+  }
+  if (outcome === 'reached' || outcome === 'callback') advanceStatus(c, 'Contacted');
+  if (outcome === 'scheduled') {
+    if (date) { c.inspectDate = date; c.inspectTime = time || ''; e.note = e.note || `For ${dayShort(date)}${time ? ' at ' + fmtClock(hm(time)) : ''}`; }
+    advanceStatus(c, 'Scheduled'); c.appt = 'scheduled'; c.offer = null; c.nextAt = null;
+  }
+  if (outcome === 'confirmed') c.appt = 'confirmed';
+  if (outcome === 'no_show') {
+    e.note = e.note || (c.inspectDate ? `Was booked ${dayShort(c.inspectDate)}${c.inspectTime ? ' ' + fmtClock(hm(c.inspectTime)) : ''}` : '');
+    c.appt = 'reschedule'; c.inspectDate = ''; c.inspectTime = ''; c.nextAt = new Date().toISOString();
+    if (c.status === 'Scheduled') c.status = 'Contacted';
+  }
+  return e;
+}
+function markReschedule(c) {
+  addContact(c, { method: 'call', outcome: 'note', note: `Needs a new time${c.inspectDate ? ' (was ' + dayShort(c.inspectDate) + (c.inspectTime ? ' ' + fmtClock(hm(c.inspectTime)) : '') + ')' : ''}`, nextAt: new Date().toISOString() });
+  c.appt = 'reschedule'; c.inspectDate = ''; c.inspectTime = '';
+  if (c.status === 'Scheduled') c.status = 'Contacted';
+}
+// Whether a claim needs a call/text, and when. Null means nothing to chase.
+function followUp(c, now = Date.now()) {
+  if (DONE.includes(c.status)) return null;
+  const st = c.status;
+  const needs = c.appt === 'reschedule' || st === 'Need to Contact' || (st === 'Contacted' && !c.inspectDate);
+  if (!needs) return null;
+  const last = lastContact(c), tries = unansweredCount(c);
+  if (last && last.outcome === 'bad_number') return { due: true, at: 0, bad: true, tries, reason: 'Bad number – get new contact info' };
+  if (c.nextAt) {
+    const at = new Date(c.nextAt).getTime();
+    const reason = c.appt === 'reschedule' ? 'Needs a new appointment'
+      : last && last.outcome === 'callback' ? 'Asked you to call back'
+      : last && UNANSWERED.includes(last.outcome) ? `${OUTCOMES[last.outcome].label}${tries > 1 ? ` · ${tries} tries` : ''}`
+      : 'Follow up';
+    return { due: at <= now, at, tries, reason };
+  }
+  if (!last) return { due: true, at: 0, tries, reason: c.appt === 'reschedule' ? 'Needs a new appointment' : st === 'Contacted' ? 'Contacted – not scheduled yet' : 'Not contacted yet' };
+  if (st === 'Contacted' && !c.inspectDate) {
+    const at = new Date(last.at).getTime() + 24 * 3600e3;
+    return { due: at <= now, at, tries, reason: 'Reached – not scheduled yet' };
+  }
+  return null;
+}
+
+// ---------- texting ----------
+function firstName(name) {
+  let s = String(name || '').trim();
+  if (!s || /\b(LLC|INC|CORP|ASSOC|ASSN|HOA|CONDO|CONDOMINIUM|TRUST|CHURCH|COMPANY|LTD|PROPERTIES|ESTATE|ASSOCIATION|PARTNERS)\b/i.test(s)) return 'there';
+  if (s.includes(',')) s = s.split(',')[1].trim() || s.split(',')[0];
+  const w = s.split(/\s+|&/).filter(x => x && !/^(mr|mrs|ms|dr)\.?$/i.test(x))[0] || 'there';
+  return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+}
+const street = a => String(a || '').split(',')[0].trim();
+function fillTemplate(tpl, c, extra = {}) {
+  const me = S().me;
+  const vars = {
+    first: firstName(c.insured), insured: c.insured || '', claimNo: c.claimNo || '', address: c.address || '', street: street(c.address),
+    apptDay: c.inspectDate ? dayLong(c.inspectDate) : '[date]', apptTime: c.inspectTime ? fmtClock(hm(c.inspectTime)) : '[time]',
+    myName: me.name || 'your adjuster', myPhone: fmtPhone(me.phone) || 'this number', options: '', ...extra
+  };
+  return String(tpl || '').replace(/\{(\w+)\}/g, (m, k) => k in vars ? vars[k] : m);
+}
+const textPhone = c => c.cell || c.phone || '';
+const phoneDigits = p => { const d = String(p || '').replace(/\D/g, ''); return d.length === 10 ? '+1' + d : d.length === 11 && d[0] === '1' ? '+' + d : d; };
+const telHref = p => 'tel:' + phoneDigits(p);
+const smsHref = (p, body) => `sms:${phoneDigits(p)}${body ? (isIOS() ? '&' : '?') + 'body=' + encodeURIComponent(body) : ''}`;
+const mapHref = a => 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(a || '');
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); const ok = document.execCommand('copy'); t.remove(); return ok; }
+}
+function download(name, text, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
+</script>
+<script>
+// ===== adstrat.js =====
+'use strict';
+// ---------- AdStrat sync (same parser + Chrome extension protocol as the original tracker) ----------
+// Parses AdStrat claim rows from a claims-list page. Shared by the bookmark and the Chrome extension.
+function adstratParse(root) {
+  const rows = [...root.querySelectorAll('tr')].filter(tr => /Claim Type:/.test(tr.textContent) && /Received:/.test(tr.textContent));
+  return rows.filter(r => !rows.some(o => o !== r && r.contains(o))).map(r => {
+    const T = el => (el ? el.innerText : '').replace(/\u00a0/g, ' ');
+    const g = (s, re) => { const m = re.exec(s); return m ? m[1].trim() : ''; };
+    const td = [...r.children].map(T), c1 = td[1] || '', c2 = td[2] || '', c3 = td[3] || '', c4 = td[4] || '';
+    const ins = c3.split('\n').map(s => s.trim()).filter(Boolean);
+    const inp = p => { const i = [...r.querySelectorAll('input[type=text]')].find(x => x.name.indexOf(p) === 0); return i ? i.value.trim() : ''; };
+    const idm = /(?:getnotes|buildPDF|getreserves)\((\d+)\)/.exec(r.innerHTML);
+    return {
+      id: idm ? idm[1] : '', closed: !!r.children[0].querySelector('img[title*="closed" i]') || /^closed$/im.test(td[0] || ''),
+      examiner: c1.split('\n')[0].trim(),
+      lossLoc: g(c1, /Loss Location\s*\n([\s\S]*?)(?:\n\s*\n|Staff Contacted|$)/).replace(/\s*\n\s*/g, ', '),
+      type: g(c2, /Claim Type:\s*(.*)/), claimNo: g(c2, /Claim #:\s*(.*)/), policy: g(c2, /Policy #:\s*(.*)/), adminNo: g(c2, /Admin Strat #:\s*(.*)/), dol: g(c2, /Date of Loss:\s*(.*)/),
+      carrier: g(c2, /Date of Loss:.*\n\s*\n?\s*(.+)/),
+      contacted: g(c2, /Contacted:\s*\n?\s*([\d\/]+(?:\s+[\d:]+\s*[AP]M)?)/), inspected: g(c2, /Inspected:\s*\n?\s*([\d\/]+(?:\s*\n?\s*[\d:]+\s*[AP]M)?)/).replace(/\s*\n\s*/, ' '),
+      insured: ins[0] || '', insAddr: ins.slice(1, 3).join(', '),
+      home: g(c3, /Home:\s*([^\n]*)/), work: g(c3, /Work:\s*([^\n]*)/), cell: inp('ip'), email: inp('ie'),
+      received: g(c4, /Received:\s*(.*)/), reserve: g(c4, /Reserve:\s*(.*)/), stage: g(c4, /Reserve:.*\n\s*(.*)/),
+      invoice: (td[5] || '').trim().replace(/\s*\n\s*/g, ' ')
+    };
+  });
+}
+// This function is turned into a bookmark. It runs on the AdStrat claims page (not in the tracker),
+// reads every page of the claim list, and copies it to the clipboard for the tracker. Read-only.
+function adstratGrabber(parse) {
+  const MARK = 'ADSTRAT-CLAIMS v1';
+  const wins = [window];
+  for (let i = 0; i < window.frames.length; i++) wins.push(window.frames[i]);
+  let W = null;
+  for (const w of wins) { try { if (/dclaims\.asp/i.test(w.location.pathname)) { W = w; break; } } catch (e) { } }
+  const host = document.body || (W && W.document.body);
+  const say = html => {
+    let box = document.getElementById('trkSync');
+    if (!box) { box = document.createElement('div'); box.id = 'trkSync'; box.style.cssText = 'position:fixed;top:16px;right:16px;z-index:2147483647;background:#fff;color:#222;border:2px solid #0078d4;border-radius:12px;padding:14px 16px;font:14px Segoe UI,Arial,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.3);max-width:340px;line-height:1.4'; host.appendChild(box); }
+    box.innerHTML = html + '<div style="text-align:right;margin-top:8px"><a href="#" id="trkClose" style="color:#666;font-size:12px">Close</a></div>';
+    box.querySelector('#trkClose').onclick = e => { e.preventDefault(); box.remove(); };
+    return box;
+  };
+  if (!W) { say('<b>Claim Tracker</b><br>Open your AdStrat <b>claims list</b> first, then click this bookmark again.'); return; }
+  const D = W.document;
+  (async () => {
+    say('<b>Claim Tracker</b><br>Reading your AdStrat claims…');
+    const total = +((D.querySelector('input[name="txtTotal"]') || {}).value || 1);
+    const btn = [...D.querySelectorAll('input[onclick*="PAGE="]')].map(b => b.getAttribute('onclick'))[0] || '';
+    const nav = ((/'([^']*Dclaims\.asp\?[^']*PAGE=\d+[^']*)'/i.exec(btn) || [])[1] || 'Dclaims.asp?ACTION=&PAGE=1&SORT= tblClaims.ID DESC').replace(/&amp;/g, '&');
+    const claims = total > 1 ? [] : parse(D);
+    for (let p = 1; total > 1 && p <= total; p++) {
+      say(`<b>Claim Tracker</b><br>Reading page ${p} of ${total}…`);
+      const html = await (await W.fetch(new URL(nav.replace(/PAGE=\d+/i, 'PAGE=' + p), W.location.href), { credentials: 'include' })).text();
+      const box = D.createElement('div'); box.style.cssText = 'position:absolute;left:-99999px;top:0;width:1400px';
+      box.innerHTML = new DOMParser().parseFromString(html, 'text/html').body.innerHTML;
+      D.body.appendChild(box); claims.push(...parse(box)); box.remove();
+    }
+    const seen = new Set(), list = claims.filter(c => c.id && !seen.has(c.id) && seen.add(c.id));
+    const payload = MARK + '\n' + JSON.stringify({ pulled: new Date().toISOString(), claims: list });
+    const box = say(`<b>Claim Tracker</b><br>Found <b>${list.length}</b> claims (${list.filter(c => !c.closed).length} open).<br><button id="trkCopy" style="margin-top:10px;padding:8px 14px;background:#0078d4;color:#fff;border:0;border-radius:8px;font:inherit;cursor:pointer">Copy for tracker</button>`);
+    box.querySelector('#trkCopy').onclick = async () => {
+      try { await navigator.clipboard.writeText(payload); }
+      catch (e) { const t = document.createElement('textarea'); t.value = payload; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
+      say(`<b>Claim Tracker</b><br>✓ Copied ${list.length} claims.<br>Now open your tracker and click <b>⟳ Sync from AdStrat</b>.`);
+    };
+  })().catch(e => say('<b>Claim Tracker</b><br>Couldn\'t read AdStrat: ' + e.message + '<br>Make sure you\'re signed in.'));
+}
+const AS_MARK = 'ADSTRAT-CLAIMS v1';
+const normNo = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const nameTokens = s => new Set(String(s || '').toUpperCase().replace(/[^A-Z ]/g, ' ').split(/\s+/).filter(w => w.length >= 3 && !['AND', 'THE'].includes(w)));
+const sameName = (a, b) => { const A = nameTokens(a); return [...nameTokens(b)].some(w => A.has(w)); };
+const splitDT = s => {
+  const m = /^(\d{1,2}\/\d{1,2}\/\d{4})(?:\s+(\d{1,2}):(\d{2})(?::\d{2})?\s*([AP]M))?/i.exec(String(s || '').trim());
+  if (!m) return { date: '', time: '' };
+  let time = ''; if (m[2]) { let h = +m[2] % 12; if (/p/i.test(m[4])) h += 12; time = String(h).padStart(2, '0') + ':' + m[3]; }
+  return { date: parseDate(m[1]), time };
+};
+// Match a date of loss to an existing event (within 3 days), or create one like "Flood Apr 2025".
+function eventForDol(dol) {
+  if (!dol) return '';
+  const t = new Date(dol + 'T12:00:00');
+  let best = null, bd = 3.5;
+  for (const e of S().events) if (e.dol) { const d = Math.abs(new Date(e.dol + 'T12:00:00') - t) / 864e5; if (d < bd) { bd = d; best = e; } }
+  if (best) return best.name;
+  const name = 'Flood ' + t.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  const same = S().events.find(e => e.name === name);
+  if (same) { if (dol < same.dol) same.dol = dol; return name; }
+  S().events.push({ name, dol });
+  return name;
+}
+function asStatus(a) {
+  if (a.closed) return /accept/i.test(a.invoice || '') ? 'Paid' : 'Closed';
+  const inv = (a.invoice || '').toLowerCase(), st = (a.stage || '').toLowerCase();
+  if (/declin|revis/.test(inv + ' ' + st)) return 'Revision Request';
+  if (/accept/.test(inv)) return 'Accepted';
+  if (/final|examiner review/.test(st)) return 'Final';
+  if (/proof of loss/.test(st)) return 'Pending Signed POL';
+  if (/prelim/.test(st)) return 'Prelim Sent';
+  if (/status|interim|supplement/.test(st)) return 'In Progress';
+  if (a.inspected) return 'Inspected';
+  if (a.contacted) return 'Contacted';
+  return 'Need to Contact';
+}
+// Adds new AdStrat claims and updates matching ones (by AdStrat ID, or first time by claim # + insured name).
+// Never moves a claim backward in status and never touches Paid/Closed claims' status or your notes.
+function mergeAdstrat(list) {
+  const res = { added: 0, updated: 0, statusChanged: 0, same: 0 };
+  const byAs = new Map(state.claims.filter(c => c.asId).map(c => [String(c.asId), c]));
+  const linked = new Set();
+  const stamp = new Date().toISOString();
+  for (const a of list) {
+    if (!a.id || !a.insured) continue;
+    const dol = parseDate(a.dol), ins = splitDT(a.inspected), con = splitDT(a.contacted), rec = parseDate(a.received);
+    const invDate = parseDate((/(\d{1,2}\/\d{1,2}\/\d{4})/.exec(a.invoice || '') || [])[1]);
+    const phones = [a.cell, a.home, a.work].map(p => (p || '').trim()).filter(Boolean);
+    const phone = fmtPhone(phones.find(p => p.replace(/\D/g, '').length === 10) || phones[0] || '');
+    const cell = (a.cell || '').replace(/\D/g, '').length === 10 ? fmtPhone(a.cell) : '';
+    const address = a.lossLoc || a.insAddr || '';
+    const reserves = hasNum(a.reserve) ? String(num(a.reserve)) : '';
+    const activity = [con.date, ins.date, invDate, rec].filter(Boolean).sort().pop() || '';
+    const info = { asId: String(a.id), policyNo: a.policy || '', carrier: a.carrier || '', email: a.email || '', examiner: a.examiner || '', dol, received: rec, asStage: a.stage || '', asInvoice: a.invoice || '', asClosed: !!a.closed };
+    let c = byAs.get(String(a.id));
+    if (!c) {
+      const cands = state.claims.filter(x => !x.asId && !linked.has(x) && normNo(x.claimNo) && normNo(x.claimNo) === normNo(a.claimNo) && sameName(x.insured, a.insured));
+      if (cands.length) c = cands.sort((x, y) => Math.abs(num(x.reserves) - num(reserves)) - Math.abs(num(y.reserves) - num(reserves)))[0];
+    }
+    if (!c) {
+      const st = asStatus(a);
+      state.claims.push(normalizeClaim(Object.assign({ id: uid(), event: eventForDol(dol), insured: a.insured, claimNo: a.claimNo || a.adminNo || '', type: 'standard', reserves, grossLoss: '', billerOverride: '', status: st, lastUpdate: activity, inspectDate: ins.date, inspectTime: ins.time, address, phone, cell, notes: '', lat: null, lng: null, appt: st === 'Scheduled' ? 'scheduled' : '' }, info, { asSynced: stamp })));
+      res.added++; continue;
+    }
+    linked.add(c);
+    const before = JSON.stringify({ ...c, asSynced: 0 });
+    Object.assign(c, info);
+    if (!c.claimNo) c.claimNo = a.claimNo;
+    if (!c.event) c.event = eventForDol(dol);
+    if (!c.address && address) { c.address = address; c.lat = c.lng = null; }
+    if (!c.phone && phone) c.phone = phone;
+    if (!c.cell && cell) c.cell = cell;
+    if (reserves) c.reserves = reserves;
+    if (ins.date) { c.inspectDate = ins.date; c.inspectTime = ins.time || c.inspectTime; }
+    const ns = asStatus(a);
+    if (!DONE.includes(c.status) && STATUSES.indexOf(ns) > STATUSES.indexOf(c.status)) {
+      c.status = ns; res.statusChanged++;
+      if (STATUSES.indexOf(ns) > STATUSES.indexOf('Scheduled') && c.appt) { c.appt = ''; c.nextAt = null; }
+    }
+    if (activity && (!c.lastUpdate || activity > c.lastUpdate)) c.lastUpdate = activity;
+    if (JSON.stringify({ ...c, asSynced: 0 }) !== before) res.updated++; else res.same++;
+    c.asSynced = stamp;
+  }
+  return res;
+}
+const syncSummary = r => `AdStrat sync: ${r.added} added, ${r.updated} updated${r.statusChanged ? ` (${r.statusChanged} status change${r.statusChanged > 1 ? 's' : ''})` : ''}, ${r.same} unchanged.`;
+function runAdstratImport(text) {
+  let p;
+  try { p = JSON.parse(text.slice(text.indexOf(AS_MARK) + AS_MARK.length)); } catch (e) { return 'That AdStrat data was incomplete. Click the bookmark on AdStrat and copy again.'; }
+  const r = mergeAdstrat(p.claims || []);
+  S().adstratLast = p.pulled || new Date().toISOString();
+  save(); renderAll(); renderAdstrat();
+  return syncSummary(r);
+}
+const hasExt = () => document.documentElement.hasAttribute('data-adstrat-ext');
+function renderAdstrat() {
+  const last = S().adstratLast;
+  $('#asLast').textContent = last ? 'Last synced ' + new Date(last).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Not synced yet';
+  const ext = hasExt();
+  $('#extOn').style.display = ext ? '' : 'none';
+  $('#extOff').style.display = ext ? 'none' : '';
+  $('#syncAdstrat').title = ext ? 'Pull your latest claims from AdStrat' : 'Pull in claims you copied from AdStrat';
+}
+// Parses AdStrat pages returned by the extension. Event handlers and resource URLs are neutralized first,
+// so nothing from AdStrat can run or load here; innerText needs the content attached to measure layout.
+function parseAdstratHtml(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.querySelectorAll('script,style,link,meta,base,iframe,frame,object,embed,noscript,svg,math,template').forEach(e => e.remove());
+  for (const el of doc.body.querySelectorAll('*')) for (const a of [...el.attributes]) {
+    const n = a.name.toLowerCase();
+    if (n.startsWith('on')) { el.setAttribute('data-' + n, a.value); el.removeAttribute(a.name); }
+    else if (['src', 'srcset', 'href', 'background', 'action', 'formaction', 'poster', 'xlink:href', 'id', 'class'].includes(n)) el.removeAttribute(a.name);
+  }
+  const box = document.createElement('div');
+  box.setAttribute('aria-hidden', 'true');
+  box.style.cssText = 'position:absolute;left:-99999px;top:0;width:1400px;visibility:visible';
+  box.append(...[...doc.body.childNodes].map(n => document.importNode(n, true)));
+  document.body.appendChild(box);
+  try { return adstratParse(box); } finally { box.remove(); }
+}
+function askExtension() {
+  return new Promise(resolve => {
+    const id = uid();
+    const done = res => { clearTimeout(timer); window.removeEventListener('message', onMsg); resolve(res); };
+    const onMsg = e => { if (e.source === window && e.data && e.data.source === 'adstrat-ext' && e.data.id === id) done(e.data); };
+    const timer = setTimeout(() => done({ ok: false, error: 'AdStrat took too long to answer. Try again in a minute.' }), 90000);
+    window.addEventListener('message', onMsg);
+    window.postMessage({ source: 'claim-tracker', type: 'adstrat-fetch', id }, '*');
+  });
+}
+async function syncViaExtension() {
+  const btn = $('#syncAdstrat'), note = $('#syncNote');
+  btn.disabled = true; note.textContent = 'Pulling your claims from AdStrat…';
+  try {
+    const res = await askExtension();
+    if (res.signedOut) {
+      note.innerHTML = 'You\'re not signed in to AdStrat. <a href="#" id="openAs">Open AdStrat</a>, sign in (tick <b>Remember Me</b>), then click Sync again.';
+      $('#openAs').addEventListener('click', e => { e.preventDefault(); window.postMessage({ source: 'claim-tracker', type: 'adstrat-open' }, '*'); });
+      return;
+    }
+    if (!res.ok) { note.textContent = 'Couldn\'t reach AdStrat: ' + (res.error || 'unknown error'); return; }
+    const seen = new Set();
+    const list = res.pages.flatMap(parseAdstratHtml).filter(c => c.id && !seen.has(c.id) && seen.add(c.id));
+    if (!list.length) { note.textContent = 'AdStrat answered, but no claims were found on your claims list.'; return; }
+    const r = mergeAdstrat(list);
+    S().adstratLast = res.pulled || new Date().toISOString();
+    save(); renderAll(); renderAdstrat();
+    note.textContent = syncSummary(r);
+  } catch (e) { note.textContent = 'Sync failed: ' + e.message; }
+  finally { btn.disabled = false; }
+}
+function wireAdstrat() {
+  $('#syncAdstrat').addEventListener('click', async () => {
+    if (hasExt()) return syncViaExtension();
+    let text = '';
+    try { text = await navigator.clipboard.readText(); } catch (e) { }
+    if (text.includes(AS_MARK)) { $('#syncNote').textContent = runAdstratImport(text); return; }
+    if (!S().adstratLast) {
+      showTab('settings');
+      const p = $('#asPanel'); p.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      p.classList.remove('flash'); void p.offsetWidth; p.classList.add('flash');
+      return;
+    }
+    $('#syncNote').innerHTML = 'Nothing from AdStrat on the clipboard. On AdStrat, click your <b>Copy AdStrat claims</b> bookmark → <b>Copy for tracker</b>, then click Sync again. (Setup is under Settings.)';
+  });
+  $('#asBookmarklet').href = 'javascript:' + encodeURIComponent('(' + adstratGrabber.toString() + ')(' + adstratParse.toString() + ')');
+  $('#asBookmarklet').addEventListener('click', e => { e.preventDefault(); alert('Drag this button onto your bookmarks bar (Ctrl+Shift+B shows the bar). Then click the bookmark while you\'re on your AdStrat claims list.'); });
+  if (location.protocol === 'file:') {
+    const dir = decodeURIComponent(location.pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/[^/]*$/, '').replace(/\//g, '\\');
+    $('#extPath').textContent = dir + '\\claim-tracker-adstrat-extension';
+  }
+  window.addEventListener('message', e => { if (e.source === window && e.data && e.data.source === 'adstrat-ext' && e.data.type === 'ready') renderAdstrat(); });
+}
+</script>
+<script>
+// ===== planner.js =====
+'use strict';
+// ---------- maps + drive times ----------
+let lastGeoCall = 0;
+async function geocode(address) {
+  // ArcGIS first (best US street-address accuracy, works from file:// pages); Photon, then Nominatim as fallbacks.
+  try {
+    const r = await fetch('https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?f=json&maxLocations=1&countryCode=USA&SingleLine=' + encodeURIComponent(address));
+    const j = await r.json();
+    const c = j.candidates && j.candidates[0];
+    if (c && c.score >= 80) return { lat: c.location.y, lng: c.location.x };
+  } catch (e) { }
+  try {
+    const r = await fetch('https://photon.komoot.io/api/?limit=1&q=' + encodeURIComponent(address));
+    const j = await r.json();
+    const f = j.features && j.features[0];
+    if (f) return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] };
+  } catch (e) { }
+  const wait = 1100 - (Date.now() - lastGeoCall); if (wait > 0) await sleep(wait);
+  lastGeoCall = Date.now();
+  try {
+    const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q=' + encodeURIComponent(address));
+    const j = await r.json();
+    return j.length ? { lat: +j[0].lat, lng: +j[0].lon } : null;
+  } catch (e) { return null; }
+}
+async function ensureGeo(obj) {
+  if (obj.lat) return true;
+  if (!obj.address) return false;
+  const g = await geocode(obj.address);
+  if (g) { obj.lat = g.lat; obj.lng = g.lng; return true; }
+  return false;
+}
+function haversineKm(a, b) {
+  const R = 6371, t = x => x * Math.PI / 180;
+  const dLat = t(b.lat - a.lat), dLng = t(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(t(a.lat)) * Math.cos(t(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+async function travelMatrix(pts) {
+  try {
+    if (pts.length < 2) throw new Error('one point');
+    const coords = pts.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(';');
+    const r = await fetch(`https://router.project-osrm.org/table/v1/driving/${coords}?annotations=duration,distance`);
+    const j = await r.json();
+    if (j.code !== 'Ok') throw new Error(j.message || j.code);
+    return { dur: j.durations.map(r => r.map(v => v ?? 1e7)), dist: j.distances.map(r => r.map(v => v ?? 1e7)), real: true };
+  } catch (e) {
+    const dist = pts.map(a => pts.map(b => haversineKm(a, b) * 1.3 * 1000));
+    return { dur: dist.map(r => r.map(m => m / (72000 / 3600))), dist, real: false };
+  }
+}
+function loopCost(route, D) { let s = 0; for (let i = 0; i < route.length - 1; i++) s += D[route[i]][route[i + 1]]; return s; }
+// Nearest-neighbor path from node s to node e over `nodes`, improved with 2-opt. Returns stops in visit order (without s/e).
+function solveLoop(nodes, D, s = 0, e = 0) {
+  if (nodes.length <= 1) return nodes.slice();
+  const left = new Set(nodes), route = [s]; let cur = s;
+  while (left.size) { let best = null, bd = Infinity; for (const n of left) if (D[cur][n] < bd) { bd = D[cur][n]; best = n; } route.push(best); left.delete(best); cur = best; }
+  route.push(e);
+  let improved = true, best = loopCost(route, D), guard = 0;
+  while (improved && guard++ < 200) {
+    improved = false;
+    for (let i = 1; i < route.length - 2; i++) for (let k = i + 1; k < route.length - 1; k++) {
+      const cand = route.slice(0, i).concat(route.slice(i, k + 1).reverse(), route.slice(k + 1));
+      const c = loopCost(cand, D);
+      if (c < best - 1) { best = c; route.splice(0, route.length, ...cand); improved = true; }
+    }
+  }
+  return route.slice(1, -1);
+}
+// Simulates one day from lodging node cfg.s to lodging node cfg.e. info[n] = { from, to } = earliest/latest
+// inspection start (minutes). cfg.start is the earliest departure ('leave' mode) or earliest first inspection
+// ('first' mode). cfg.gap = buffer minutes between stops. Waiting is allowed.
+function simulateDay(route, D, info, cfg) {
+  const eta = [], wait = [], late = [], s0 = cfg.s || 0, e0 = cfg.e || 0, gap = cfg.gap || 0;
+  if (!route.length) { const d = D[s0][e0] / 60; return { eta, wait, late, end: cfg.start + d, drive: d, leave: cfg.start, ok: cfg.start + d <= cfg.back + 0.5, idle: 0 }; }
+  let prev = s0, drive = 0, t = 0, leave = 0, startDelay = 0;
+  route.forEach((n, i) => {
+    const d = D[prev][n] / 60; drive += d;
+    const arr = i === 0 ? (cfg.mode === 'first' ? cfg.start : cfg.start + d) : t + gap + d;
+    const s = Math.max(arr, info[n].from);
+    if (i === 0) { leave = s - d; wait.push(0); startDelay = s - arr; } else wait.push(s - arr);
+    late.push(s > info[n].to + 0.5);
+    eta.push(s); t = s + cfg.insp; prev = n;
+  });
+  const back = D[prev][e0] / 60; drive += back; t += back;
+  return { eta, wait, late, end: t, drive, leave, ok: !late.some(Boolean) && t <= cfg.back + 0.5, idle: startDelay + wait.reduce((a, b) => a + b, 0) };
+}
+const weekKey = iso => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() - (d.getDay() + 6) % 7); return isoOf(d); };
+function isWorkDay(iso) {
+  const P = S().plan, dow = new Date(iso + 'T12:00:00').getDay();
+  if ((P.skip === 'sun' && dow === 0) || (P.skip === 'wknd' && (dow === 0 || dow === 6))) return false;
+  return !(P.blocked || []).includes(iso);
+}
+// Inspections already on the books per week (claims outside `exclude`), for the weekly limit.
+function weekCounts(exclude) {
+  const w = {};
+  for (const c of state.claims) if (c.inspectDate && !exclude.has(c.id) && c.appt !== 'reschedule' && c.status !== 'Need to Contact') { const k = weekKey(c.inspectDate); w[k] = (w[k] || 0) + 1; }
+  return w;
+}
+const PRIO_BONUS = { 3: 3600, 2: 1500, 1: 0, 0: -900 }; // seconds of driving a priority claim is "worth"
+
+async function geocodeLodgings(setStatus) {
+  const lod = S().lodging;
+  if (!lod.address) throw new Error('Enter where you\'re staying first (Route Planner tab).');
+  if (!lod.lat) { setStatus('Finding your lodging on the map…'); if (!(await ensureGeo(lod))) throw new Error('Couldn\'t find the lodging address. Try adding city, state and ZIP.'); save(); }
+  const stays = S().stays.filter(s => s.date && s.address).sort((a, b) => a.date.localeCompare(b.date));
+  for (const s of stays) {
+    if (s.lat) continue;
+    setStatus(`Finding ${esc(s.address)} on the map…`);
+    if (!(await ensureGeo(s))) throw new Error(`Couldn't find where you're staying the night of ${fmtDate(s.date)}: “${esc(s.address)}”. Try adding city, state and ZIP.`);
+    save();
+  }
+  return stays;
+}
+// Which lodging you start from and end at on a given date (index into [lodging, ...stays]).
+function lodgingPairFor(date, stays) {
+  const at = night => { let k = 0; stays.forEach((s, i) => { if (s.date <= night) k = i + 1; }); return k; };
+  return { s: at(addDays(date, -1)), e: at(date) };
+}
+
+// ---------- route planner ----------
+const planStatus = t => { $('#planStatus').innerHTML = t; };
+async function buildPlan() {
+  const btn = $('#buildPlan'); btn.disabled = true;
+  const P = S().plan;
+  try {
+    S().lodging.address = $('#pLodging').value.trim();
+    const startDate = $('#pStart').value || addDays(todayISO(), 1);
+    // Booked = has an inspection date on/after the plan start. With a time it's fixed; with only a date it stays on that day.
+    const booked = c => !P.replan && !!c.inspectDate && c.inspectDate >= startDate;
+    const cands = state.claims.filter(c => UNINSPECTED.includes(c.status) && (P.replan || booked(c) || c.status !== 'Scheduled'));
+    if (!cands.length) { planStatus('No uninspected claims to plan.'); return; }
+    const stays = await geocodeLodgings(planStatus);
+    const noAddr = cands.filter(c => !c.address);
+    const withAddr = cands.filter(c => c.address);
+    const failed = [];
+    for (let i = 0; i < withAddr.length; i++) {
+      if (withAddr[i].lat) continue;
+      planStatus(`Finding addresses on the map… ${i + 1} of ${withAddr.length}`);
+      if (await ensureGeo(withAddr[i])) save(); else failed.push(withAddr[i]);
+    }
+    const located = withAddr.filter(c => c.lat);
+    if (!located.length) { planStatus('None of the claim addresses could be found.'); return; }
+    if (located.length + stays.length > 99) { planStatus('Too many claims for one plan (max 99, including places you stay). Filter by event or status first.'); return; }
+    planStatus('Calculating drive times…');
+    const lod = S().lodging;
+    const lodgings = [{ address: lod.address, lat: lod.lat, lng: lod.lng }, ...stays.map(s => ({ address: s.address, lat: s.lat, lng: s.lng, from: s.date }))];
+    const pts = [lodgings[0], ...located.map(c => ({ lat: c.lat, lng: c.lng })), ...lodgings.slice(1)];
+    const M = await travelMatrix(pts), D = M.dur;
+    // Node 0 = first lodging, 1..N = claims, N+k = lodging k (k >= 1).
+    const N = located.length, lodgeNode = k => k ? N + k : 0;
+    const pairFor = date => { const { s, e } = lodgingPairFor(date, stays); return { s, e, sn: lodgeNode(s), en: lodgeNode(e), key: s + '>' + e }; };
+    planStatus('Building days around booked appointments…'); await sleep(0);
+    const startT = hm(P.leave), backT = hm(P.back), insp = num(P.inspectMin) || 60, gap = Math.max(0, num(P.gap));
+    const maxStops = Math.max(1, num(P.maxStops) || 6), minStops = Math.min(maxStops, Math.max(1, num(P.minStops) || maxStops));
+    const weekMax = Math.max(0, num(P.weekMax));
+    const extraLimit = num(P.extraMin) * 60;
+    const mode = P.startMode === 'first' ? 'first' : 'leave';
+    const nodes = located.map((_, i) => i + 1);
+    const rank = n => prioRank(located[n - 1].priority);
+    const info = [null, ...located.map(c => {
+      const pinDate = booked(c) ? c.inspectDate : null;
+      if (pinDate && c.inspectTime) { const t = hm(c.inspectTime); return { fixed: true, pinDate, from: t, to: t }; }
+      return { fixed: false, pinDate, from: c.availFrom ? hm(c.availFrom) : -Infinity, to: c.availTo ? hm(c.availTo) - insp : Infinity };
+    })];
+    const isFlex = n => !info[n].pinDate;
+    const span = n => info[n].to - info[n].from;
+    // A day with an early booked appointment may need an earlier start, and a late one may run past "Back by".
+    const cfgFor = (g, p) => {
+      let start = startT;
+      for (const n of g) if (info[n].fixed) start = Math.min(start, mode === 'first' ? info[n].from : info[n].from - D[p.sn][n] / 60);
+      const cfg = { start, mode, insp, gap, back: backT, s: p.sn, e: p.en };
+      const fx = g.filter(n => info[n].fixed).sort((a, b) => info[a].from - info[b].from);
+      if (fx.length) cfg.back = Math.max(backT, simulateDay(fx, D, info, cfg).end);
+      return cfg;
+    };
+    // Best feasible visit order for a set of stops on a day with lodging pair p (or null if no order works).
+    const routeMemo = new Map();
+    const routeDay = (g, p) => {
+      const key = p.key + ':' + g.slice().sort((a, b) => a - b).join(',');
+      if (routeMemo.has(key)) return routeMemo.get(key);
+      const cfg = cfgFor(g, p);
+      // Cost = driving + idle time (seconds), where idle = starting later than planned or waiting between stops.
+      const evalR = r => { const s = simulateDay(r, D, info, cfg); return { ok: s.ok, cost: loopCost([p.sn, ...r, p.en], D) + s.idle * 60 }; };
+      let best = null;
+      const consider = r => { if (r) { const e = evalR(r); if (e.ok && (!best || e.cost < best.cost)) best = { route: r, cost: e.cost }; } };
+      consider(solveLoop(g, D, p.sn, p.en));
+      const flex = g.filter(n => !info[n].fixed);
+      const build = order => {
+        let r = g.filter(n => info[n].fixed).sort((a, b) => info[a].from - info[b].from);
+        for (const n of order) {
+          let bestR = null, bc = Infinity;
+          for (let i = 0; i <= r.length; i++) {
+            const cand = r.slice(0, i).concat(n, r.slice(i)), e = evalR(cand);
+            if (e.ok && e.cost < bc) { bc = e.cost; bestR = cand; }
+          }
+          if (!bestR) return null;
+          r = bestR;
+        }
+        return r;
+      };
+      if (!best || g.some(n => info[n].fixed || span(n) < Infinity)) {
+        consider(build(flex.slice().sort((a, b) => (span(a) - span(b)) || 0)));
+        consider(build(solveLoop(flex, D, p.sn, p.en)));
+        for (let improved = !!best, guard = 0; improved && guard < 10; guard++) {
+          improved = false;
+          for (let i = 0; i < best.route.length; i++) {
+            const n = best.route[i], rest = best.route.filter((_, k) => k !== i);
+            for (let j = 0; j <= rest.length; j++) {
+              if (j === i) continue;
+              const cand = rest.slice(0, j).concat(n, rest.slice(j)), e = evalR(cand);
+              if (e.ok && e.cost < best.cost - 1) { best = { route: cand, cost: e.cost }; improved = true; }
+            }
+          }
+        }
+      }
+      routeMemo.set(key, best);
+      return best;
+    };
+    const gCost = (g, p) => g.length ? (routeDay(g, p) || { cost: Infinity }).cost : D[p.sn][p.en];
+    const addCost = (cur, x, p) => gCost(cur.concat(x), p) - gCost(cur, p);
+
+    const pinnedBy = {};
+    nodes.filter(n => !isFlex(n)).forEach(n => { (pinnedBy[info[n].pinDate] = pinnedBy[info[n].pinDate] || []).push(n); });
+    // Weekly limit: count inspections already on the books (outside this plan) plus booked ones in it.
+    const weekUsed = weekCounts(new Set(located.map(c => c.id)));
+    nodes.filter(n => !isFlex(n)).forEach(n => { const k = weekKey(info[n].pinDate); weekUsed[k] = (weekUsed[k] || 0) + 1; });
+    const weekLeft = date => weekMax ? weekMax - (weekUsed[weekKey(date)] || 0) : Infinity;
+    const lastPinned = Object.keys(pinnedBy).sort().pop() || '';
+    const lastMove = stays.length ? stays[stays.length - 1].date : '';
+    const horizon = [lastPinned, lastMove, startDate].sort().pop();
+    const pairs = new Map();
+    for (let d = startDate; d <= addDays(horizon, 1); d = addDays(d, 1)) { const p = pairFor(d); pairs.set(p.key, p); }
+    const flexAll = nodes.filter(isFlex);
+    const unfit = flexAll.filter(n => [...pairs.values()].every(p => !routeDay([n], p)));
+    const remaining = solveLoop(flexAll.filter(n => !unfit.includes(n)), D);
+    // Seed each day with the highest-priority claim that fits. With one place to stay, follow one efficient loop;
+    // with moves, prefer the claim that's the smallest detour from that day's start/end.
+    const pickSeed = (p, cur) => {
+      let bi = -1, bc = Infinity, br = -1;
+      remaining.forEach((x, i) => {
+        const r = rank(x);
+        if (r < br || (bi >= 0 && r === br && !stays.length)) return;
+        if (!routeDay(cur.concat(x), p)) return;
+        const c = stays.length ? D[p.sn][x] + D[x][p.en] - D[p.sn][p.en] : 0;
+        if (r > br || c < bc) { bc = c; bi = i; br = r; }
+      });
+      return bi;
+    };
+    // Walk forward day by day: start from that day's booked stops (or a seed claim), fill to the minimum with
+    // the cheapest claims that fit the clock (priority claims count as cheaper), then add cheap detours up to the max.
+    const groups = [];
+    for (let date = startDate, guard = 0; guard < 400; date = addDays(date, 1), guard++) {
+      if (!remaining.length && date > lastPinned) break;
+      const p = pairFor(date);
+      const cur = (pinnedBy[date] || []).slice();
+      if (!cur.length && !isWorkDay(date)) continue;
+      const g = { date, nodes: cur, conflict: false, p };
+      if (cur.length && !routeDay(cur, p)) { g.conflict = true; groups.push(g); continue; }
+      let room = weekLeft(date);
+      if (!cur.length) {
+        const bi = remaining.length && room > 0 ? pickSeed(p, cur) : -1;
+        if (bi < 0) {
+          if (p.s !== p.e) { g.travel = true; groups.push(g); }
+          if (date > horizon && (room > 0 || !remaining.length)) break;
+          continue;
+        }
+        cur.push(remaining.splice(bi, 1)[0]); room--;
+        weekUsed[weekKey(date)] = (weekUsed[weekKey(date)] || 0) + 1;
+      }
+      while (remaining.length && cur.length < maxStops && room > 0 && isWorkDay(date)) {
+        let bi = -1, bc = Infinity;
+        remaining.forEach((x, i) => { const c = addCost(cur, x, p) - PRIO_BONUS[rank(x)]; if (c < bc) { bc = c; bi = i; } });
+        if (bi < 0 || bc === Infinity || (cur.length >= minStops && bc > extraLimit)) break;
+        cur.push(remaining.splice(bi, 1)[0]); room--;
+        weekUsed[weekKey(date)] = (weekUsed[weekKey(date)] || 0) + 1;
+      }
+      groups.push(g);
+    }
+    unfit.push(...remaining.splice(0));
+    while (groups.length && groups[groups.length - 1].travel) groups.pop();
+    // Improve: swap or move unbooked claims between days whenever it reduces total driving and every day still works.
+    // Higher-priority claims are never pushed to a later day, and weekly limits are kept.
+    planStatus('Balancing days to cut driving…'); await sleep(0);
+    const live = groups.filter(g => !g.conflict);
+    for (let pass = 0, improved = true; improved && pass < 30; pass++) {
+      improved = false;
+      for (let i = 0; i < live.length; i++) for (let j = i + 1; j < live.length; j++) {
+        const A = live[i].nodes, B = live[j].nodes, pA = live[i].p, pB = live[j].p;
+        const sameWeek = weekKey(live[i].date) === weekKey(live[j].date);
+        const before = gCost(A, pA) + gCost(B, pB);
+        let best = null, bestGain = 60, bestMove = null;
+        for (let a = 0; a < A.length; a++) for (let b = 0; b < B.length; b++) {
+          if (!isFlex(A[a]) || !isFlex(B[b]) || rank(A[a]) > rank(B[b])) continue;
+          const A2 = A.slice(), B2 = B.slice(); [A2[a], B2[b]] = [B[b], A[a]];
+          const gain = before - gCost(A2, pA) - gCost(B2, pB);
+          if (gain > bestGain) { bestGain = gain; best = [A2, B2]; bestMove = null; }
+        }
+        for (const [S2, T, flip] of [[A, B, false], [B, A, true]]) {
+          if (S2.length <= minStops || T.length >= maxStops) continue;
+          const toDate = flip ? live[i].date : live[j].date;
+          if (!sameWeek && weekLeft(toDate) <= 0) continue;
+          const pS = flip ? pB : pA, pT = flip ? pA : pB;
+          // Pushing a claim to a later day has to save at least 5 minutes of driving per day of delay.
+          const delayDays = Math.max(0, (new Date(toDate) - new Date(flip ? live[j].date : live[i].date)) / 864e5);
+          for (let a = 0; a < S2.length; a++) {
+            if (!isFlex(S2[a]) || (!flip && rank(S2[a]) >= 2)) continue;
+            const Sx = S2.filter((_, k) => k !== a), Tx = T.concat(S2[a]);
+            const gain = before - gCost(Sx, pS) - gCost(Tx, pT) - delayDays * 300;
+            if (gain > bestGain) { bestGain = gain; best = flip ? [Tx, Sx] : [Sx, Tx]; bestMove = sameWeek ? null : [flip ? live[j].date : live[i].date, toDate]; }
+          }
+        }
+        if (best) {
+          live[i].nodes = best[0]; live[j].nodes = best[1]; improved = true;
+          if (bestMove) { weekUsed[weekKey(bestMove[0])]--; weekUsed[weekKey(bestMove[1])] = (weekUsed[weekKey(bestMove[1])] || 0) + 1; }
+        }
+      }
+    }
+    // Display: shift earlier stops later to absorb waiting, so you leave later instead of idling between stops.
+    const compress = (route, tl, p) => {
+      const eta = tl.eta.slice();
+      for (let i = route.length - 2; i >= 0; i--) {
+        const latest = Math.min(info[route[i]].to, eta[i + 1] - insp - gap - D[route[i]][route[i + 1]] / 60);
+        if (latest > eta[i]) eta[i] = latest;
+      }
+      const wait = eta.map((e, i) => i === 0 ? 0 : e - (eta[i - 1] + insp + gap + D[route[i - 1]][route[i]] / 60));
+      return { ...tl, eta, wait, leave: route.length ? eta[0] - D[p.sn][route[0]] / 60 : tl.leave };
+    };
+    const days = groups.filter(g => g.nodes.length || g.travel).sort((a, b) => a.date.localeCompare(b.date)).map(g => {
+      const p = g.p;
+      const rd = g.conflict || !g.nodes.length ? null : routeDay(g.nodes, p);
+      const route = rd ? rd.route : g.nodes.slice().sort((a, b) => (info[a].from - info[b].from) || 0);
+      const tl = compress(route, simulateDay(route, D, info, cfgFor(g.nodes, p)), p);
+      let miles = 0, prev = p.sn; for (const s of route) { miles += M.dist[prev][s]; prev = s; } miles += M.dist[prev][p.en];
+      return {
+        date: g.date, s: p.s, e: p.e, bonus: Math.max(0, route.length - minStops), conflict: g.conflict || tl.late.some(Boolean),
+        stops: route.map((n, i) => ({ id: located[n - 1].id, eta: tl.eta[i], fixed: info[n].fixed, pinned: !!info[n].pinDate, wait: tl.wait[i], late: tl.late[i] })),
+        driveMin: tl.drive, miles: miles / 1609.34, leave: tl.leave, end: tl.end
+      };
+    });
+    state.lastPlan = { days, realRoads: M.real, lodging: { ...lodgings[0] }, lodgings, built: new Date().toISOString(), skipped: [...noAddr, ...failed].map(c => c.id), unfit: unfit.map(n => located[n - 1].id), weekMax };
+    save();
+    renderPlan();
+  } catch (e) { planStatus(esc(e.message.startsWith('Enter') || e.message.startsWith('Couldn') ? e.message : 'Something went wrong: ' + e.message + '. Check your internet connection.')); }
+  finally { btn.disabled = false; }
+}
+const dayColors = () => ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+const prioTag = c => c.priority === 'urgent' ? ' <span class="prio prio-urgent">Urgent</span>' : c.priority === 'high' ? ' <span class="prio prio-high">High</span>' : '';
+function renderPlan() {
+  const plan = state.lastPlan;
+  $('#applyPlan').disabled = $('#printPlan').disabled = !plan;
+  if (!plan) { $('#planDays').innerHTML = ''; return; }
+  const byId = Object.fromEntries(state.claims.map(c => [c.id, c]));
+  const colors = dayColors();
+  const totalStops = plan.days.reduce((a, d) => a + d.stops.length, 0);
+  const totalDrive = plan.days.reduce((a, d) => a + d.driveMin, 0);
+  const skipped = (plan.skipped || []).map(id => byId[id]).filter(Boolean);
+  const unfit = (plan.unfit || []).map(id => byId[id]).filter(Boolean);
+  const bookedCount = plan.days.reduce((a, d) => a + d.stops.filter(s => s.pinned).length, 0);
+  planStatus(`<b>${totalStops} inspections over ${plan.days.length} day${plan.days.length === 1 ? '' : 's'}</b>${bookedCount ? ` (including ${bookedCount} booked)` : ''} · ${Math.round(totalDrive / 60 * 10) / 10} hrs total driving` +
+    (plan.realRoads ? '' : ' · <span class="stale-warn">Road routing unavailable – times are straight-line estimates</span>') +
+    (skipped.length ? `<br><span class="stale-warn">Not scheduled (missing or unfound address): ${skipped.map(c => esc(c.insured)).join(', ')}</span>` : '') +
+    (unfit.length ? `<br><span class="stale-warn">Couldn't fit${plan.weekMax ? ' (or over your weekly limit)' : ''}: ${unfit.map(c => esc(c.insured) + (winText(c) ? ` (available ${winText(c)}, too tight)` : '')).join(', ')}</span>` : ''));
+  const lods = plan.lodgings || [plan.lodging];
+  const multi = lods.length > 1;
+  const short = a => esc(String(a || '').split(',')[0]);
+  $('#planDays').innerHTML = plan.days.map((d, i) => {
+    const stops = d.stops.map(s => ({ ...s, c: byId[s.id] })).filter(s => s.c);
+    const from = lods[d.s || 0] || lods[0], to = lods[d.e || 0] || lods[0], moving = from !== to;
+    const gm = 'https://www.google.com/maps/dir/' + [from.address, ...stops.map(s => s.c.address), to.address].map(encodeURIComponent).join('/');
+    const dt = new Date(d.date + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+    const tag = s => s.fixed ? ' <span class="pill" title="Booked appointment – kept at this time">📌 Booked</span>' : s.pinned ? ' <span class="pill" title="Booked for this day – time chosen by the planner">📌 Booked day</span>' : '';
+    const where = multi ? `<div class="small">${moving ? `🧳 <b>Moving day:</b> start at ${short(from.address)} → end at <b>${short(to.address)}</b>` : `🏠 Start &amp; end: ${short(from.address)}`}</div>` : '';
+    const summary = stops.length
+      ? `${stops.length} stop${stops.length === 1 ? '' : 's'}${d.bonus ? ` (min + ${d.bonus} nearby pickup${d.bonus > 1 ? 's' : ''})` : ''} · ${Math.round(d.driveMin)} min driving · ${Math.round(d.miles)} mi · ${d.leave != null ? `leave ${fmtClock(d.leave)} · ` : ''}${moving ? 'arrive at new place' : 'back'} about ${fmtClock(d.end)}`
+      : `Travel only: no claims fit along the way · ${Math.round(d.driveMin)} min · ${Math.round(d.miles)} mi`;
+    return `<div class="day"><h3><span class="swatch" style="background:${colors[i % colors.length]}"></span>Day ${i + 1} · ${dt}</h3>
+      ${where}<div class="muted small">${summary}</div>
+      ${d.conflict ? '<div class="small stale-bad">⚠ The booked appointments on this day can\'t all be reached on time. Check their times.</div>' : ''}
+      <ol>${stops.map(s => `<li><b>${fmtClock(s.eta)}</b>${tag(s)}${prioTag(s.c)} <a href="#" data-open="${s.c.id}">${esc(s.c.insured)}</a> <span class="muted small">${esc(s.c.event)}${s.c.claimNo ? ' · ' + esc(s.c.claimNo) : ''}</span>${s.late ? ' <span class="small stale-bad">⚠ late for this time</span>' : ''}${s.wait >= 15 ? ` <span class="small muted">(~${Math.round(s.wait)} min wait before)</span>` : ''}<br><span class="small">${esc(s.c.address)}</span>${s.c.phone ? ` <span class="small muted">· ${esc(s.c.phone)}</span>` : ''}${winText(s.c) ? ` <span class="small muted">· available ${winText(s.c)}</span>` : ''}</li>`).join('')}</ol>
+      <a href="${esc(gm)}" target="_blank" rel="noopener" class="small noprint">Open day in Google Maps ↗</a></div>`;
+  }).join('');
+  drawMap();
+}
+let map = null, mapLayers = [], tileLayers = [];
+function setTiles() {
+  if (!map) return;
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  tileLayers.forEach(l => map.removeLayer(l));
+  const esri = s => `https://server.arcgisonline.com/ArcGIS/rest/services/${s}/MapServer/tile/{z}/{y}/{x}`;
+  const opt = { maxZoom: 19, attribution: 'Tiles &copy; Esri' };
+  tileLayers = dark
+    ? [L.tileLayer(esri('Canvas/World_Dark_Gray_Base'), { ...opt, maxNativeZoom: 16 }), L.tileLayer(esri('Canvas/World_Dark_Gray_Reference'), { ...opt, maxNativeZoom: 16 })]
+    : [L.tileLayer(esri('World_Street_Map'), opt)];
+  tileLayers.forEach(l => l.addTo(map));
+}
+function initMap() {
+  if (map) return;
+  if (typeof L === 'undefined') { $('#map').innerHTML = '<div class="empty">Map couldn\'t load (no internet). The schedule still works.</div>'; return; }
+  map = L.map('map').setView([35.6, -82.5], 7);
+  setTiles();
+  drawMap();
+}
+function drawMap() {
+  if (!map || !state.lastPlan) return;
+  mapLayers.forEach(l => map.removeLayer(l)); mapLayers = [];
+  const plan = state.lastPlan, colors = dayColors(), bounds = [];
+  const byId = Object.fromEntries(state.claims.map(c => [c.id, c]));
+  const lods = plan.lodgings || [plan.lodging];
+  const lodPt = k => { const l = lods[k || 0] || lods[0]; return [l.lat, l.lng]; };
+  lods.forEach((l, k) => {
+    bounds.push([l.lat, l.lng]);
+    mapLayers.push(L.marker([l.lat, l.lng], { icon: L.divIcon({ className: '', html: `<div class="home">${k ? '🛏️' : '🏠'}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }) })
+      .bindPopup((k ? `Staying from the night of ${fmtDate(l.from)}: ` : 'Lodging: ') + esc(l.address)).addTo(map));
+  });
+  for (let i = 0; i < plan.days.length; i++) {
+    const col = colors[i % colors.length];
+    const stops = plan.days[i].stops.map(s => byId[s.id]).filter(c => c && c.lat);
+    const pts = [lodPt(plan.days[i].s), ...stops.map(c => [c.lat, c.lng]), lodPt(plan.days[i].e)];
+    stops.forEach((c, j) => {
+      bounds.push([c.lat, c.lng]);
+      mapLayers.push(L.marker([c.lat, c.lng], { icon: L.divIcon({ className: '', html: `<div class="pin" style="background:${col}">${j + 1}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }) })
+        .bindPopup(`<b>Day ${i + 1}, stop ${j + 1}</b><br>${esc(c.insured)}<br>${esc(c.address)}`).addTo(map));
+    });
+    const line = L.polyline(pts, { color: col, weight: 4, opacity: .75, dashArray: '6 6' }).addTo(map); mapLayers.push(line);
+    fetch(`https://router.project-osrm.org/route/v1/driving/${pts.map(p => p[1] + ',' + p[0]).join(';')}?overview=full&geometries=geojson`)
+      .then(r => r.json()).then(j => { if (j.code === 'Ok') { line.setLatLngs(j.routes[0].geometry.coordinates.map(c => [c[1], c[0]])); line.setStyle({ dashArray: null }); } }).catch(() => { });
+  }
+  if (bounds.length) map.fitBounds(bounds, { padding: [30, 30] });
+}
+function applyPlan() {
+  const plan = state.lastPlan; if (!plan) return;
+  let n = 0;
+  for (const d of plan.days) for (const s of d.stops) {
+    const c = claimById(s.id); if (!c || s.fixed) continue;
+    c.inspectDate = d.date; c.inspectTime = hhmm(s.eta);
+    if (c.status === 'Need to Contact' || c.status === 'Contacted') c.status = 'Scheduled';
+    if (c.appt !== 'confirmed') c.appt = 'scheduled';
+    c.nextAt = null;
+    n++;
+  }
+  save(); renderAll(); planStatus(`Applied inspection dates to ${n} claims and marked them Scheduled.`);
+}
+
+// ---------- offer 3 times ----------
+// Finds a morning, a midday and an afternoon opening over the next few work days that adds the least
+// driving to the appointments you already have booked (Brian's M-Core "3 options, varied time of day" rule).
+const BUCKETS = [['morning', 'Morning', 0, 11 * 60], ['midday', 'Midday', 11 * 60, 13 * 60 + 30], ['afternoon', 'Afternoon', 13 * 60 + 30, 24 * 60]];
+async function findOfferSlots(c, setStatus = () => { }) {
+  const P = S().plan, O = S().offer;
+  if (!c.address) throw new Error('Add the property address to this claim first.');
+  const stays = await geocodeLodgings(setStatus);
+  setStatus('Finding the property on the map…');
+  if (!(await ensureGeo(c))) throw new Error('Couldn\'t find this property address on the map. Check the street, city and ZIP.');
+  const days = [];
+  for (let d = addDays(todayISO(), Math.max(0, num(O.startIn))), g = 0; days.length < Math.max(1, num(O.days) || 7) && g < 60; d = addDays(d, 1), g++) if (isWorkDay(d)) days.push(d);
+  const last = days[days.length - 1];
+  const others = state.claims.filter(x => x.id !== c.id && x.inspectDate && x.inspectDate >= days[0] && x.inspectDate <= last && !DONE.includes(x.status) && x.appt !== 'reschedule' && UNINSPECTED.includes(x.status));
+  setStatus('Checking your booked appointments…');
+  for (const x of others) if (x.inspectTime && x.address && !x.lat) await ensureGeo(x);
+  save();
+  const lod = S().lodging;
+  const lodgings = [lod, ...stays];
+  const timed = others.filter(x => x.inspectTime && x.lat);
+  const pts = [...lodgings.map(l => ({ lat: l.lat, lng: l.lng })), { lat: c.lat, lng: c.lng }, ...timed.map(x => ({ lat: x.lat, lng: x.lng }))];
+  setStatus('Calculating drive times…');
+  const M = await travelMatrix(pts), Dm = M.dur.map(r => r.map(v => v / 60));
+  const T = lodgings.length, node = x => T + 1 + timed.indexOf(x);
+  const insp = num(P.inspectMin) || 60, gap = Math.max(0, num(P.gap)), step = Math.max(15, num(O.step) || 30);
+  const startT = hm(P.leave), backT = hm(P.back), mode = P.startMode === 'first' ? 'first' : 'leave';
+  const maxStops = Math.max(1, num(P.maxStops) || 6), weekMax = Math.max(0, num(P.weekMax));
+  const wk = weekCounts(new Set([c.id]));
+  const availFrom = c.availFrom ? hm(c.availFrom) : -Infinity, availTo = c.availTo ? hm(c.availTo) - insp : Infinity;
+  const cands = [];
+  days.forEach((d, di) => {
+    if (others.filter(x => x.inspectDate === d).length >= maxStops) return;
+    if (weekMax && (wk[weekKey(d)] || 0) >= weekMax) return;
+    const pr = lodgingPairFor(d, stays);
+    const appts = timed.filter(x => x.inspectDate === d).map(x => ({ n: node(x), t: hm(x.inspectTime) })).sort((a, b) => a.t - b.t);
+    const first = Math.ceil((mode === 'leave' ? startT + Dm[pr.s][T] : startT) / step) * step;
+    for (let t = first; t + insp <= backT; t += step) {
+      if (t < availFrom || t > availTo) continue;
+      const i = appts.findIndex(a => a.t > t);
+      const nextA = i < 0 ? null : appts[i], prevA = (i < 0 ? appts[appts.length - 1] : appts[i - 1]) || null;
+      const prevN = prevA ? prevA.n : pr.s, nextN = nextA ? nextA.n : pr.e;
+      const dIn = Dm[prevN][T], dOut = Dm[T][nextN];
+      const ready = prevA ? prevA.t + insp + gap + dIn : (mode === 'leave' ? startT + dIn : startT);
+      if (ready > t + 0.5) continue;
+      if (nextA ? t + insp + gap + dOut > nextA.t + 0.5 : t + insp + dOut > backT + 0.5) continue;
+      if (prevA && prevA.t === t) continue;
+      const added = dIn + dOut - Dm[prevN][nextN];
+      const near = prevA ? timed.find(x => node(x) === prevA.n) : nextA ? timed.find(x => node(x) === nextA.n) : null;
+      cands.push({ date: d, time: hhmm(t), t, added, score: added + di * 6 + (t % 60 ? 2 : 0), bucket: BUCKETS.findIndex(b => t >= b[2] && t < b[3]), near: near ? near.insured : '', di });
+    }
+  });
+  if (!cands.length) throw new Error('No openings fit in the next ' + days.length + ' work days with your current hours and limits. Try a later "Back by" time or look further ahead in Settings.');
+  cands.sort((a, b) => a.score - b.score);
+  const picks = [];
+  for (let b = 0; b < 3; b++) { const x = cands.find(x => x.bucket === b && !picks.some(p => p.date === x.date)) || cands.find(x => x.bucket === b); if (x) picks.push(x); }
+  for (const x of cands) { if (picks.length >= 3) break; if (!picks.some(p => p.date === x.date && Math.abs(p.t - x.t) < 120)) picks.push(x); }
+  picks.sort((a, b) => a.date.localeCompare(b.date) || a.t - b.t);
+  const alts = [];
+  for (const x of cands) { if (alts.length >= 12) break; if (!picks.includes(x) && !alts.some(p => p.date === x.date && Math.abs(p.t - x.t) < 60)) alts.push(x); }
+  return { picks, alts, realRoads: M.real, days };
+}
+const slotLabel = s => `${dayShort(s.date)} at ${fmtClock(hm(s.time))}`;
+const optionsText = slots => slots.map((s, i) => `${i + 1}) ${slotLabel(s)}`).join('\n');
+</script>
+<script>
+// ===== ui.js =====
+'use strict';
+// ---------- tabs ----------
+let currentTab = 'today';
+function showTab(name) {
+  currentTab = name;
+  $$('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  $$('.tab').forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
+  if (name === 'plan') { initMap(); setTimeout(() => map && map.invalidateSize(), 60); }
+  if (name === 'settings') renderSettings();
+  if (name === 'today') renderToday();
+  if (name === 'claims') renderClaims();
+  window.scrollTo(0, 0);
+}
+$$('[data-tab]').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+$$('[data-new-claim]').forEach(b => b.addEventListener('click', () => openClaim(null)));
+
+// ---------- shared bits ----------
+const prioBadge = c => c.priority === 'urgent' ? '<span class="prio prio-urgent">Urgent</span>' : c.priority === 'high' ? '<span class="prio prio-high">High</span>' : c.priority === 'low' ? '<span class="prio prio-low">Low</span>' : '';
+const statusPill = s => `<span class="st-pill ${statusClass(s)}">${esc(s)}</span>`;
+const apptBadge = c => c.appt === 'confirmed' ? '<span class="pill good" title="Insured confirmed">✓ Confirmed</span>' : c.appt === 'reschedule' ? '<span class="pill bad">Needs reschedule</span>' : '';
+const inspText = c => c.inspectDate ? `${dayShort(c.inspectDate)}${c.inspectTime ? ' ' + fmtClock(hm(c.inspectTime)) : ''}` : '';
+function fuText(fu) {
+  if (!fu) return '';
+  if (fu.bad) return `<span class="stale-bad">${esc(fu.reason)}</span>`;
+  const when = fu.due ? '<b class="due">Due now</b>' : 'Next ' + esc(fmtWhen(new Date(fu.at).toISOString()));
+  return `${when} · ${esc(fu.reason)}`;
+}
+function actionBtns(c, opts = {}) {
+  const p = textPhone(c), b = [];
+  if (c.phone || c.cell) b.push(`<a class="btn small act" href="${esc(telHref(c.cell || c.phone))}" data-call="${c.id}" title="Call ${esc(fmtPhone(c.cell || c.phone))}">📞<span> Call</span></a>`);
+  if (p) b.push(`<button type="button" class="btn small act" data-text="${c.id}" data-tpl="${opts.tpl || ''}" title="Text">💬<span> Text</span></button>`);
+  if (opts.offer && c.address) b.push(`<button type="button" class="btn small act" data-text="${c.id}" data-tpl="offer" title="Offer 3 inspection times">🗓️<span> Offer times</span></button>`);
+  if (opts.log !== false) b.push(`<button type="button" class="btn small act" data-log="${c.id}" title="Log a call or text">📝<span> Log</span></button>`);
+  if (opts.map && c.address) b.push(`<a class="btn small act" href="${esc(mapHref(c.address))}" target="_blank" rel="noopener" title="Directions">🧭<span> Map</span></a>`);
+  return b.join('');
+}
+const quick = (label, attr, id, cls = '') => `<button type="button" class="btn small ${cls}" ${attr}="${id}">${label}</button>`;
+
+// Click handlers shared by every list (event delegation).
+let pendingCall = null;
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-call],[data-text],[data-log],[data-open],[data-q]');
+  if (!t || t.closest('dialog') && !t.closest('#dlg')) return;
+  if (t.dataset.call) {
+    pendingCall = { id: t.dataset.call, at: Date.now() };
+    if (!isPhone()) setTimeout(() => { if (pendingCall) { const id = pendingCall.id; pendingCall = null; openLog(id, 'call'); } }, 400);
+    return;
+  }
+  if (t.dataset.text) { e.preventDefault(); openText(t.dataset.text, t.dataset.tpl || ''); return; }
+  if (t.dataset.log) { e.preventDefault(); openLog(t.dataset.log, 'call'); return; }
+  if (t.dataset.q) { e.preventDefault(); quickAction(t.dataset.q, t.dataset.id); return; }
+  if (t.dataset.open && !e.target.closest('a[href]:not([data-open]),button:not([data-open]),select,input')) { e.preventDefault(); openClaim(t.dataset.open, t.dataset.pane); }
+});
+// After a phone call, ask how it went when you come back to the app.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && pendingCall && Date.now() - pendingCall.at < 3 * 3600e3) {
+    const id = pendingCall.id; pendingCall = null; setTimeout(() => openLog(id, 'call'), 300);
+  }
+});
+function withUndo(c, msg, fn) {
+  const before = JSON.stringify(c);
+  fn();
+  save(); refreshViews();
+  toastAction(msg, 'Undo', () => {
+    const i = state.claims.findIndex(x => x.id === c.id);
+    if (i >= 0) { state.claims[i] = JSON.parse(before); save(); refreshViews(); }
+  });
+}
+function toastAction(msg, label, fn, ms = 6000) {
+  const t = $('#toast');
+  t.innerHTML = `<span>${msg}</span><button type="button" class="btn small">${esc(label)}</button>`;
+  t.querySelector('button').onclick = () => { t.classList.remove('show'); fn(); };
+  t.classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove('show'), ms);
+}
+function quickAction(kind, id) {
+  const c = claimById(id); if (!c) return;
+  if (kind === 'inspected') withUndo(c, `${esc(c.insured)} marked Inspected.`, () => { advanceStatus(c, 'Inspected'); if (!c.inspectDate) c.inspectDate = todayISO(); c.appt = ''; c.nextAt = null; c.lastUpdate = todayISO(); });
+  if (kind === 'confirmed') withUndo(c, 'Marked confirmed.', () => addContact(c, { method: 'text', outcome: 'confirmed' }));
+  if (kind === 'noshow') withUndo(c, 'Marked as a no-show. It\'s back on your follow-up list.', () => addContact(c, { method: 'person', outcome: 'no_show' }));
+  if (kind === 'reschedule') withUndo(c, 'Moved to your follow-up list to reschedule.', () => markReschedule(c));
+  if (kind === 'snooze') withUndo(c, 'Snoozed until tomorrow morning.', () => { c.nextAt = clampToCallingHours(new Date(new Date(todayISO() + 'T00:00:00').getTime() + 24 * 3600e3)).toISOString(); });
+}
+
+// ---------- today ----------
+function renderToday() {
+  const now = Date.now(), today = todayISO();
+  const all = state.claims.map(enrich);
+  const open = all.filter(c => !DONE.includes(c.status));
+  $('#todayTitle').textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  $('#todaySub').innerHTML = inCallingHours() ? '' : `Outside your calling hours (${fmtClock(hm(S().contact.open))}–${fmtClock(hm(S().contact.close))}). Texts are fine; calls can wait.`;
+  const todays = open.filter(c => c.inspectDate === today && UNINSPECTED.includes(c.status)).sort((a, b) => (a.inspectTime || '99').localeCompare(b.inspectTime || '99'));
+  const fuSort = (a, b) => (b.prio - a.prio) || (a.fu.at - b.fu.at);
+  const due = open.filter(c => c.fu && c.fu.due && !c.fu.bad).sort(fuSort);
+  const soon = open.filter(c => c.fu && !c.fu.due && c.fu.at - now < 36 * 3600e3).sort((a, b) => a.fu.at - b.fu.at);
+  const confirm = open.filter(c => c.inspectDate > today && c.inspectDate <= addDays(today, 2) && c.status === 'Scheduled' && c.appt !== 'confirmed').sort((a, b) => (a.inspectDate + (a.inspectTime || '')).localeCompare(b.inspectDate + (b.inspectTime || '')));
+  const past = open.filter(c => c.inspectDate && c.inspectDate < today && c.status === 'Scheduled');
+  const bad = open.filter(c => c.fu && c.fu.bad);
+  const hard = due.filter(c => c.fu.tries >= 5);
+  const revs = open.filter(c => c.status === 'Revision Request' || c.openRev > 0);
+  const cards = [
+    ['Follow-ups due', due.length, due.length ? 'warn' : 'good', 'secDue'],
+    ["Today's inspections", todays.length, '', 'secToday'],
+    ['To confirm', confirm.length, confirm.length ? 'warn' : '', 'secConfirm'],
+    ['Needs attention', past.length + bad.length, past.length + bad.length ? 'bad' : '', 'secAttn'],
+    ['Revisions', revs.length, revs.length ? 'bad' : '', 'secRev']
+  ];
+  $('#todayCards').innerHTML = cards.map(([k, v, cls, sec]) => `<button type="button" class="card" data-jump="${sec}"><div class="k">${k}</div><div class="v ${cls}">${v}</div></button>`).join('');
+  const item = (c, sub, actions) => `<div class="item" data-open="${c.id}">
+      <div class="item-main"><div class="item-title">${esc(c.insured)} ${prioBadge(c)} ${statusPill(c.status)}</div>
+      <div class="item-sub">${sub}</div>
+      ${c.address ? `<div class="item-sub muted">${esc(c.address)}</div>` : ''}</div>
+      <div class="item-actions">${actions}</div></div>`;
+  const meta = c => [c.event, c.claimNo].filter(Boolean).map(esc).join(' · ');
+  const section = (id, title, list, render, note = '') => list.length ? `<section class="list-sec" id="${id}"><h3>${title} <span class="count">${list.length}</span></h3>${note}<div class="panel list">${list.map(render).join('')}</div></section>` : '';
+  let html = '';
+  html += section('secToday', "Today's inspections", todays, c => item(c, `<b>${c.inspectTime ? fmtClock(hm(c.inspectTime)) : 'Time not set'}</b> ${apptBadge(c)} · ${meta(c)}`,
+    actionBtns(c, { tpl: 'onway', map: true, log: false }) + quick('✓ Inspected', 'data-q="inspected" data-id', c.id)));
+  html += section('secDue', 'Follow-ups due', due, c => item(c, `${fuText(c.fu)}${c.fu.tries >= 5 ? ' <span class="pill bad">Hard to reach</span>' : ''} · ${meta(c)}`,
+    actionBtns(c, { tpl: c.fu.tries >= 1 ? 'intro' : 'offer', offer: c.fu.tries < 1 ? false : true }) + quick('Snooze', 'data-q="snooze" data-id', c.id)),
+    hard.length ? `<p class="muted small">${hard.length} claim${hard.length > 1 ? 's have' : ' has'} had 5+ tries with no answer. Consider emailing the examiner or sending a letter.</p>` : '');
+  html += section('secConfirm', 'Confirm upcoming appointments', confirm, c => item(c, `<b>${inspText(c)}</b> · ${meta(c)}`,
+    actionBtns(c, { tpl: 'confirm', log: false }) + quick('✓ Confirmed', 'data-q="confirmed" data-id', c.id)));
+  html += section('secAttn', 'Needs attention', [...past, ...bad], c => c.fu && c.fu.bad
+    ? item(c, `<span class="stale-bad">Bad phone number</span> – get new contact info from the examiner${c.examiner ? ' (' + esc(c.examiner) + ')' : ''} · ${meta(c)}`, quick('Edit', 'data-open', c.id))
+    : item(c, `<span class="stale-warn">Appointment was ${inspText(c)}</span> – still marked Scheduled · ${meta(c)}`,
+      quick('✓ Inspected', 'data-q="inspected" data-id', c.id) + quick('No-show', 'data-q="noshow" data-id', c.id) + quick('Reschedule', 'data-q="reschedule" data-id', c.id)));
+  html += section('secRev', 'Revision requests', revs, c => item(c, `${c.openRev ? `${c.openRev} open item${c.openRev > 1 ? 's' : ''}` : 'No items listed yet'} · ${meta(c)}`,
+    `<button type="button" class="btn small" data-open="${c.id}" data-pane="report">Open checklist</button>`));
+  if (soon.length) html += `<details class="list-sec"><summary><h3>Coming up <span class="count">${soon.length}</span></h3></summary><div class="panel list">${soon.map(c => item(c, `${fuText(c.fu)} · ${meta(c)}`, actionBtns(c, { tpl: 'intro' }))).join('')}</div></details>`;
+  if (!html) html = state.claims.length
+    ? '<div class="empty">You\'re all caught up. 🎉<br><span class="small">Nothing to call, confirm or fix right now.</span></div>'
+    : '<div class="empty">No claims yet. Tap <b>+ Add claim</b>, or import or sync them under <b>Settings</b>.</div>';
+  $('#todayLists').innerHTML = html;
+}
+$('#todayCards').addEventListener('click', e => { const b = e.target.closest('[data-jump]'); const s = b && document.getElementById(b.dataset.jump); if (s) s.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+
+// ---------- claims list ----------
+let sortKey = 'next', sortAsc = true;
+$$('#claimsTable th').forEach(th => th.addEventListener('click', () => {
+  const k = th.dataset.k; if (sortKey === k) sortAsc = !sortAsc; else { sortKey = k; sortAsc = !['days', 'prio', 'reserves', 'biller', 'pay'].includes(k); } $('#fSort').value = sortKey; renderClaims();
+}));
+['search', 'fEvent', 'fStatus'].forEach(id => $('#' + id).addEventListener('input', renderClaims));
+$('#fSort').addEventListener('change', e => { sortKey = e.target.value; sortAsc = !['days', 'prio'].includes(sortKey); renderClaims(); });
+
+function renderCards(all) {
+  const open = all.filter(c => !DONE.includes(c.status));
+  const unins = all.filter(c => UNINSPECTED.includes(c.status));
+  const stale = open.filter(c => c.days !== null && c.days >= 14);
+  const sum = (arr, k) => arr.reduce((a, c) => a + (c[k] || 0), 0);
+  const paid = all.filter(c => c.status === 'Paid');
+  const cards = [
+    ['Open claims', open.length, ''],
+    ['Uninspected', unins.length, unins.length ? 'warn' : ''],
+    ['No update 14+ days', stale.length, stale.length ? 'bad' : 'good'],
+    ['Revision requests', all.filter(c => c.status === 'Revision Request').length, all.some(c => c.status === 'Revision Request') ? 'bad' : ''],
+    ['Total billed', usd0(sum(all, 'biller')), ''],
+    ['Total pay', usd2(sum(all, 'pay')), ''],
+    ['Pay received', usd2(sum(paid, 'pay')), 'good'],
+    ['Pay pending', usd2(sum(all.filter(c => c.status !== 'Paid'), 'pay')), '']
+  ];
+  $('#cards').innerHTML = cards.map(([k, v, cls]) => `<div class="card"><div class="k">${k}</div><div class="v ${cls}">${v}</div></div>`).join('');
+}
+function renderFilters() {
+  const evs = [...new Set([...S().events.map(e => e.name), ...state.claims.map(c => c.event).filter(Boolean)])];
+  const cur = $('#fEvent').value;
+  $('#fEvent').innerHTML = '<option value="">All events</option>' + evs.map(e => `<option ${e === cur ? 'selected' : ''}>${esc(e)}</option>`).join('');
+  $('#eventList').innerHTML = evs.map(e => `<option value="${esc(e)}">`).join('');
+  const fs = $('#fStatus'), curS = fs.value;
+  fs.innerHTML = '<option value="">All statuses</option><option value="__open">Open (not Paid/Closed)</option><option value="__uninspected">Uninspected</option><option value="__due">Follow-up due</option>' + STATUSES.map(s => `<option>${s}</option>`).join('');
+  fs.value = curS;
+}
+function renderClaims() {
+  const all = state.claims.map(enrich);
+  const q = $('#search').value.trim().toLowerCase(), ev = $('#fEvent').value, st = $('#fStatus').value;
+  let rows = all.filter(c => {
+    if (ev && c.event !== ev) return false;
+    if (st === '__open' && DONE.includes(c.status)) return false;
+    if (st === '__uninspected' && !UNINSPECTED.includes(c.status)) return false;
+    if (st === '__due' && !(c.fu && c.fu.due)) return false;
+    if (st && !st.startsWith('__') && c.status !== st) return false;
+    if (q && ![c.insured, c.claimNo, c.notes, c.address, c.event, c.policyNo, c.email, c.asId, c.phone, c.cell].join(' ').toLowerCase().includes(q)) return false;
+    return true;
+  });
+  renderCards(rows);
+  const filters = [ev && esc(ev), st && esc($('#fStatus').selectedOptions[0].textContent), q && `“${esc(q)}”`].filter(Boolean);
+  $('#cardsNote').innerHTML = filters.length ? `Totals for <b>${filters.join(' · ')}</b> (${rows.length} of ${all.length} claims)` : '';
+  const val = c => sortKey === 'next' ? c.nextSort : sortKey === 'reserves' ? num(c.reserves) : sortKey === 'status' ? STATUSES.indexOf(c.status) : sortKey === 'inspectDate' ? (c.inspectDate ? c.inspectDate + (c.inspectTime || '') : '') : c[sortKey];
+  rows.sort((a, b) => {
+    let x = val(a), y = val(b);
+    if (x === null || x === undefined || x === '') return (y === null || y === undefined || y === '') ? 0 : 1;
+    if (y === null || y === undefined || y === '') return -1;
+    const r = typeof x === 'number' ? x - y : String(x).localeCompare(String(y));
+    return (sortAsc ? r : -r) || (b.prio - a.prio);
+  });
+  $$('#claimsTable th').forEach(th => { th.classList.toggle('sorted', th.dataset.k === sortKey); th.classList.toggle('asc', th.dataset.k === sortKey && sortAsc); });
+  if (isPhone()) renderClaimCards(rows); else renderClaimTable(rows);
+  $('#emptyNote').style.display = state.claims.length ? 'none' : 'block';
+  $('#countNote').textContent = `${rows.length} of ${state.claims.length}`;
+}
+function renderClaimTable(rows) {
+  $('#claimCards').innerHTML = '';
+  $('#claimsTable tbody').innerHTML = rows.map(c => {
+    const dayCls = c.days === null ? '' : c.days >= 14 ? 'stale-bad' : c.days >= 7 ? 'stale-warn' : '';
+    const statusOpts = (STATUSES.includes(c.status) ? STATUSES : [c.status, ...STATUSES]).map(s => `<option ${s === c.status ? 'selected' : ''}>${esc(s)}</option>`).join('');
+    const typeTag = c.type && c.type !== 'standard' ? ` <span class="pill">${esc({ supplemental: 'Supp', cwop: 'CWOP', withdrawn: 'Withdrawn', erroneous: 'Erroneous' }[c.type])}</span>` : '';
+    const flag = c.oldSchedule ? ' <span class="flag" title="Date of loss is before 10/1/2023 – the 2023 schedule may not apply. Use a biller override.">⚠</span>' : '';
+    const ovr = hasNum(c.billerOverride) ? ' <span class="muted small" title="Biller override">*</span>' : '';
+    return `<tr data-open="${c.id}" class="${DONE.includes(c.status) ? 'done' : ''}">
+      <td>${esc(c.event)}</td><td>${esc(c.insured)}${typeTag}</td><td>${esc(c.claimNo)}</td>
+      <td class="num">${hasNum(c.reserves) ? usd2(num(c.reserves)) : '–'}</td>
+      <td class="num" title="${esc(c.why)}">${usd0(c.biller)}${ovr}${flag}</td>
+      <td class="num">${usd2(c.pay)}</td>
+      <td><select class="st ${statusClass(c.status)}" data-status="${c.id}">${statusOpts}</select>${c.asStage ? `<div class="small muted" title="Latest AdStrat report">${esc(c.asStage)}</div>` : ''}</td>
+      <td>${prioBadge(c)}</td>
+      <td>${inspText(c)} ${apptBadge(c)}</td>
+      <td class="small">${c.fu ? fuText(c.fu) : ''}</td>
+      <td class="num ${dayCls}">${c.days ?? ''}</td>
+      <td>${fmtDate(c.lastUpdate)}</td>
+      <td class="notes">${esc(c.notes).replace(/\n/g, '<br>')}</td></tr>`;
+  }).join('');
+  const tot = k => rows.reduce((a, c) => a + (k === 'reserves' ? num(c.reserves) : c[k]), 0);
+  $('#claimsTable tfoot').innerHTML = rows.length ? `<tr><td colspan="3">${rows.length} claim${rows.length === 1 ? '' : 's'} shown</td><td class="num">${usd2(tot('reserves'))}</td><td class="num">${usd0(tot('biller'))}</td><td class="num">${usd2(tot('pay'))}</td><td colspan="7"></td></tr>` : '';
+}
+function renderClaimCards(rows) {
+  $('#claimsTable tbody').innerHTML = ''; $('#claimsTable tfoot').innerHTML = '';
+  $('#claimCards').innerHTML = rows.map(c => {
+    const dayCls = c.days === null ? '' : c.days >= 14 ? 'stale-bad' : c.days >= 7 ? 'stale-warn' : 'muted';
+    const line = c.inspectDate && UNINSPECTED.includes(c.status) ? `📅 ${inspText(c)} ${apptBadge(c)}` : c.fu ? `⏰ ${fuText(c.fu)}` : c.inspectDate ? `Inspected ${fmtDate(c.inspectDate)}` : '';
+    return `<div class="ccard ${DONE.includes(c.status) ? 'done' : ''}" data-open="${c.id}">
+      <div class="ccard-top"><b>${esc(c.insured)}</b> ${prioBadge(c)}<span class="spacer"></span>${statusPill(c.status)}</div>
+      <div class="small muted">${[c.event, c.claimNo, hasNum(c.reserves) ? usd0(num(c.reserves)) : ''].filter(Boolean).map(esc).join(' · ')} · Pay ${usd0(c.pay)}</div>
+      ${line ? `<div class="small">${line}</div>` : ''}
+      <div class="ccard-foot"><span class="small ${dayCls}">${c.days !== null ? `Updated ${c.days}d ago` : ''}</span><span class="spacer"></span>${UNINSPECTED.includes(c.status) ? actionBtns(c, { log: false }) : ''}</div>
+    </div>`;
+  }).join('');
+}
+$('#claimsTable tbody').addEventListener('change', e => {
+  const id = e.target.dataset.status; if (!id) return;
+  const c = claimById(id); c.status = e.target.value; c.lastUpdate = todayISO();
+  if (!UNINSPECTED.includes(c.status)) { c.appt = ''; c.nextAt = null; }
+  save(); refreshViews();
+});
+matchMedia('(max-width: 760px)').addEventListener('change', () => renderClaims());
+
+function renderAll() { renderFilters(); renderClaims(); renderToday(); renderPlan(); }
+function refreshViews() {
+  renderFilters();
+  if (currentTab === 'claims') renderClaims(); else if (currentTab === 'today') renderToday(); else if (currentTab === 'plan') renderPlan();
+  if ($('#dlg').open && editingId) renderSheet();
+}
+// Called by sync when newer data arrived from another device.
+function onRemoteChanges() {
+  if (editingId && !claimById(editingId) && $('#dlg').open) { $('#dlg').close(); toast('That claim was deleted on another device.'); }
+  renderFilters();
+  if (currentTab === 'claims') renderClaims(); if (currentTab === 'today') renderToday(); if (currentTab === 'plan') renderPlan(); if (currentTab === 'settings') renderSettings();
+  if ($('#dlg').open && editingId && activePane !== 'details') renderSheet();
+}
+afterSave.push(() => { if (typeof onDataChanged === 'function') onDataChanged(); });
+</script>
+<script>
+// ===== ui-claim.js =====
+'use strict';
+// ---------- claim sheet ----------
+const dlg = $('#dlg'), form = $('#claimForm');
+let editingId = null, activePane = 'activity';
+form.status.innerHTML = STATUSES.map(s => `<option>${s}</option>`).join('');
+function formData() { const o = {}; new FormData(form).forEach((v, k) => o[k] = typeof v === 'string' ? v.trim() : v); return o; }
+function updateCalc() { const c = formData(); const { fee, why } = feeFor(c); $('#cBiller').textContent = usd0(fee); $('#cPay').textContent = usd2(payFor(fee)); $('#cWhy').textContent = why; }
+form.addEventListener('input', updateCalc);
+function setPane(p) {
+  activePane = p;
+  $$('#dlgTabs button').forEach(b => b.classList.toggle('active', b.dataset.pane === p));
+  $('#pane-activity').hidden = p !== 'activity'; $('#pane-report').hidden = p !== 'report'; form.hidden = p !== 'details';
+  if (p === 'details') fillForm(); else renderSheet();
+  $('#dlg').scrollTop = 0;
+}
+$('#dlgTabs').addEventListener('click', e => { const b = e.target.closest('[data-pane]'); if (b && !b.disabled) setPane(b.dataset.pane); });
+function openClaim(id, pane) {
+  editingId = id;
+  $$('#dlgTabs button').forEach(b => b.disabled = !id && b.dataset.pane !== 'details');
+  if (!dlg.open) dlg.showModal();
+  setPane(id ? (pane || 'activity') : 'details');
+  if (!id) setTimeout(() => form.insured.focus(), 50);
+}
+function fillForm() {
+  const c = editingId ? claimById(editingId) : { event: $('#fEvent').value || (S().events.at(-1) || {}).name || '', type: 'standard', status: 'Need to Contact', priority: 'normal', lastUpdate: todayISO() };
+  form.reset();
+  [...form.status.options].forEach(o => { if (!STATUSES.includes(o.value)) o.remove(); });
+  if (c.status && !STATUSES.includes(c.status)) form.status.insertAdjacentHTML('afterbegin', `<option>${esc(c.status)}</option>`);
+  for (const el of form.elements) if (el.name) el.value = c[el.name] ?? '';
+  if (!form.priority.value) form.priority.value = 'normal';
+  sheetHead(c);
+  $('#delClaim').style.display = editingId ? '' : 'none';
+  $('#asInfo').innerHTML = c.asId ? `<b>AdStrat</b> #${esc(c.asId)}${c.asClosed ? ' · Closed' : ''}${c.asStage ? ' · ' + esc(c.asStage) : ''}${c.asInvoice ? ' · Invoice ' + esc(c.asInvoice) : ''}<br>` +
+    [c.carrier, c.policyNo && 'Policy ' + c.policyNo, c.dol && 'DOL ' + fmtDate(c.dol), c.received && 'Received ' + fmtDate(c.received), c.examiner && 'Examiner ' + c.examiner, c.email].filter(Boolean).map(esc).join(' · ') +
+    (c.asSynced ? `<br>Synced ${new Date(c.asSynced).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : '') : '';
+  updateCalc();
+}
+function sheetHead(c) {
+  $('#dlgTitle').innerHTML = editingId ? `${esc(c.insured)} ${prioBadge(c)}` : 'New claim';
+  $('#dlgSub').innerHTML = editingId ? [c.event, c.claimNo && '#' + c.claimNo].filter(Boolean).map(esc).join(' · ') + ' ' + statusPill(c.status) : '';
+}
+$('#closeDlg').addEventListener('click', () => dlg.close());
+dlg.addEventListener('close', () => { editingId = null; });
+$('#touchToday').addEventListener('click', () => { form.lastUpdate.value = todayISO(); });
+$('#delClaim').addEventListener('click', () => {
+  if (!confirm('Delete this claim? This also removes it from your other devices.')) return;
+  state.claims = state.claims.filter(c => c.id !== editingId); save(); dlg.close(); renderAll();
+});
+form.addEventListener('submit', e => {
+  e.preventDefault();
+  const d = formData();
+  if (d.cell) d.cell = fmtPhone(d.cell);
+  if (d.phone) d.phone = fmtPhone(d.phone);
+  let id = editingId;
+  if (id) {
+    const c = claimById(id);
+    if (c.address !== d.address) { c.lat = null; c.lng = null; }
+    if (d.inspectDate && !c.inspectDate && UNINSPECTED.includes(d.status)) { d.status = STATUSES.indexOf(d.status) < 2 ? 'Scheduled' : d.status; c.appt = 'scheduled'; c.nextAt = null; }
+    if (!d.inspectDate && c.appt && c.appt !== 'reschedule') c.appt = '';
+    if (!UNINSPECTED.includes(d.status)) { c.appt = ''; c.nextAt = null; }
+    Object.assign(c, d);
+  } else {
+    id = uid();
+    state.claims.push(normalizeClaim(Object.assign({ id, lat: null, lng: null, appt: d.inspectDate ? 'scheduled' : '' }, d)));
+  }
+  if (d.event && !S().events.some(x => x.name.toLowerCase() === d.event.toLowerCase())) S().events.push({ name: d.event, dol: '' });
+  save(); renderAll();
+  toast('✓ Saved');
+  editingId = id; $$('#dlgTabs button').forEach(b => b.disabled = false);
+  setPane('activity');
+});
+
+function renderSheet() {
+  const c = claimById(editingId); if (!c) return;
+  sheetHead(c);
+  if (activePane === 'activity') renderActivity(c);
+  if (activePane === 'report') renderReport(c);
+}
+function renderActivity(c) {
+  const fu = followUp(c), un = UNINSPECTED.includes(c.status);
+  const phones = [c.cell && `📱 <a href="${esc(telHref(c.cell))}" data-call="${c.id}">${esc(c.cell)}</a>`, c.phone && c.phone !== c.cell && `☎️ <a href="${esc(telHref(c.phone))}" data-call="${c.id}">${esc(c.phone)}</a>`].filter(Boolean).join(' &nbsp; ');
+  let appt;
+  if (c.inspectDate && un) {
+    appt = `<div class="box"><div class="box-title">📅 ${esc(dayLong(c.inspectDate))}${c.inspectTime ? ' at ' + fmtClock(hm(c.inspectTime)) : ''} ${apptBadge(c) || '<span class="pill">Scheduled</span>'}</div>
+      <div class="row">${c.appt !== 'confirmed' ? quick('💬 Send confirmation', 'data-text', c.id) + quick('✓ Confirmed', 'data-q="confirmed" data-id', c.id) : ''}
+      ${quick('✓ Inspected', 'data-q="inspected" data-id', c.id)}${quick('No-show', 'data-q="noshow" data-id', c.id)}${quick('Reschedule', 'data-q="reschedule" data-id', c.id)}</div></div>`;
+    appt = appt.replace(`data-text="${c.id}"`, `data-text="${c.id}" data-tpl="confirm"`);
+  } else if (un) {
+    const o = c.offer && c.offer.slots && c.offer.slots.length ? c.offer : null;
+    appt = `<div class="box"><div class="box-title">No inspection booked${c.appt === 'reschedule' ? ' <span class="pill bad">Needs reschedule</span>' : ''}</div>
+      ${o ? `<div class="small muted">You offered these ${esc(fmtWhen(o.at))}. When they reply, book it:</div>
+        <div class="offer-book">${o.slots.map((s, i) => `<button type="button" class="btn small" data-book="${i}">Book ${i + 1}) ${esc(slotLabel(s))}</button>`).join('')}</div>` : ''}
+      <div class="row">${c.address ? `<button type="button" class="btn small primary" data-text="${c.id}" data-tpl="offer">🗓️ ${o ? 'Offer new times' : 'Offer 3 times'}</button>` : '<span class="muted small">Add the property address to offer times.</span>'}
+      <button type="button" class="btn small" data-book-other>Book a time…</button></div></div>`;
+  } else appt = c.inspectDate ? `<div class="box"><div class="box-title">Inspected ${esc(dayShort(c.inspectDate))}</div></div>` : '';
+  const fuBox = fu ? `<div class="box ${fu.due ? 'due-box' : ''}"><div class="box-title">⏰ ${fuText(fu)}</div>
+      <div class="row"><input type="datetime-local" id="fuEdit" value="${c.nextAt ? toLocalInput(c.nextAt) : ''}" aria-label="Next follow-up">
+      <button type="button" class="btn small" id="fuSave">Set</button>${c.nextAt ? '<button type="button" class="btn small" id="fuClear">Clear</button>' : ''}</div></div>` : '';
+  const log = (c.contacts || []).slice().sort(byAtDesc);
+  $('#pane-activity').innerHTML = `
+    <div class="actions-bar">${actionBtns(c, { offer: un && !c.inspectDate, map: true, tpl: c.inspectDate && un ? 'confirm' : '' })}</div>
+    <div class="kv">${phones ? `<div>${phones}</div>` : '<span class="muted">No phone number</span>'}${c.address ? `<div>📍 ${esc(c.address)}</div>` : ''}${c.availFrom || c.availTo ? `<div class="muted small">Available ${winText(c)}</div>` : ''}</div>
+    <div class="grid2">
+      <label class="f">Status <select id="actStatus">${(STATUSES.includes(c.status) ? STATUSES : [c.status, ...STATUSES]).map(s => `<option ${s === c.status ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label>
+      <label class="f">Priority <select id="actPrio">${PRIORITIES.map(([k, l]) => `<option value="${k}" ${k === (c.priority || 'normal') ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    </div>
+    ${appt}${fuBox}
+    <h4>Contact history ${log.length ? `<span class="count">${log.length}</span>` : ''}</h4>
+    ${log.length ? `<ul class="log">${log.map(x => `<li><span class="log-ic">${(OUTCOMES[x.outcome] || OUTCOMES.note).icon}</span><div><b>${esc((OUTCOMES[x.outcome] || OUTCOMES.note).label)}</b> <span class="muted small">${esc(METHODS[x.method] || '')} · ${esc(fmtWhen(x.at))}</span>${x.note ? `<div class="small">${esc(x.note)}</div>` : ''}</div><button type="button" class="btn icon small" data-dellog="${x.id}" title="Remove">✕</button></li>`).join('')}</ul>`
+      : '<p class="muted small">Nothing logged yet. Use Call, Text or Log above.</p>'}
+    ${c.notes ? `<h4>Notes</h4><div class="small notes-box">${esc(c.notes).replace(/\n/g, '<br>')}</div>` : ''}`;
+}
+const toLocalInput = iso => { const d = new Date(iso); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
+$('#pane-activity').addEventListener('change', e => {
+  const c = claimById(editingId); if (!c) return;
+  if (e.target.id === 'actStatus') { c.status = e.target.value; c.lastUpdate = todayISO(); if (!UNINSPECTED.includes(c.status)) { c.appt = ''; c.nextAt = null; } save(); refreshViews(); }
+  if (e.target.id === 'actPrio') { c.priority = e.target.value; save(); refreshViews(); }
+});
+$('#pane-activity').addEventListener('click', e => {
+  const c = claimById(editingId); if (!c) return;
+  const t = e.target.closest('button'); if (!t) return;
+  if (t.dataset.book !== undefined) {
+    const s = c.offer.slots[+t.dataset.book];
+    addContact(c, { method: 'text', outcome: 'scheduled', date: s.date, time: s.time, note: `Picked option ${+t.dataset.book + 1}: ${slotLabel(s)}` });
+    save(); refreshViews();
+    toastAction(`✓ Booked ${esc(slotLabel(s))}.`, 'Send confirmation', () => openText(c.id, 'confirm'), 8000);
+  }
+  if (t.hasAttribute('data-book-other')) openLog(c.id, 'call', 'scheduled');
+  if (t.dataset.dellog) { if (!confirm('Remove this entry from the contact history?')) return; c.contacts = c.contacts.filter(x => x.id !== t.dataset.dellog); save(); refreshViews(); }
+  if (t.id === 'fuSave') { const v = $('#fuEdit').value; c.nextAt = v ? new Date(v).toISOString() : null; save(); refreshViews(); toast('Follow-up set.'); }
+  if (t.id === 'fuClear') { c.nextAt = null; save(); refreshViews(); }
+});
+
+function renderReport(c) {
+  const steps = S().steps, prog = c.progress || {};
+  const done = steps.filter(s => prog[s.key]).length;
+  const revs = c.revisions || [], open = revs.filter(r => !r.done).length;
+  $('#pane-report').innerHTML = `
+    <h4>Report progress <span class="count">${done}/${steps.length}</span></h4>
+    <div class="progress"><div style="width:${steps.length ? done / steps.length * 100 : 0}%"></div></div>
+    <ul class="checklist">${steps.map(s => `<li><label><input type="checkbox" data-step="${esc(s.key)}" ${prog[s.key] ? 'checked' : ''}> ${esc(s.label)}</label>${prog[s.key] ? `<span class="muted small">${fmtDate(prog[s.key])}</span>` : s.status ? `<span class="muted small">→ ${esc(s.status)}</span>` : ''}</li>`).join('')}</ul>
+    <h4>Revision requests ${revs.length ? `<span class="count">${open} open</span>` : ''}</h4>
+    ${c.status === 'Revision Request' && !revs.length ? '<p class="small muted">This claim is in Revision Request. List each change the examiner asked for, then tick them off as you fix them.</p>' : ''}
+    <ul class="checklist">${revs.map(r => `<li class="${r.done ? 'done' : ''}"><label><input type="checkbox" data-rev="${r.id}" ${r.done ? 'checked' : ''}> ${esc(r.text)}</label><span class="muted small">${r.done && r.doneAt ? 'fixed ' + fmtDate(r.doneAt) : 'added ' + fmtDate(r.at)}</span><button type="button" class="btn icon small" data-delrev="${r.id}" title="Remove">✕</button></li>`).join('')}</ul>
+    <form class="row" id="revForm"><input id="revText" placeholder="e.g. Add photo of water line in garage" style="flex:1;min-width:0"><button class="btn" type="submit">Add</button></form>
+    ${c.status === 'Revision Request' && revs.length && !open ? '<div class="box"><div class="box-title">All revision items are fixed.</div><button type="button" class="btn small primary" id="revDone">Mark Final (resubmitted)</button></div>' : ''}`;
+}
+$('#pane-report').addEventListener('change', e => {
+  const c = claimById(editingId); if (!c) return;
+  const k = e.target.dataset.step, r = e.target.dataset.rev;
+  if (!k && !r) return;
+  if (k) {
+    c.progress = c.progress || {};
+    if (e.target.checked) {
+      c.progress[k] = todayISO();
+      const st = (S().steps.find(s => s.key === k) || {}).status;
+      if (st && c.status !== 'Revision Request') advanceStatus(c, st);
+    } else delete c.progress[k];
+    c.lastUpdate = todayISO();
+  }
+  if (r) { const x = c.revisions.find(v => v.id === r); x.done = e.target.checked; x.doneAt = x.done ? todayISO() : null; c.lastUpdate = todayISO(); }
+  save(); refreshViews();
+});
+$('#pane-report').addEventListener('click', e => {
+  const c = claimById(editingId); if (!c) return;
+  const d = e.target.closest('[data-delrev]');
+  if (d) { c.revisions = c.revisions.filter(v => v.id !== d.dataset.delrev); save(); refreshViews(); }
+  if (e.target.id === 'revDone') { c.status = 'Final'; c.lastUpdate = todayISO(); save(); refreshViews(); toast('Moved to Final.'); }
+});
+$('#pane-report').addEventListener('submit', e => {
+  e.preventDefault();
+  const c = claimById(editingId), v = $('#revText').value.trim(); if (!c || !v) return;
+  c.revisions.push({ id: uid(), text: v, done: false, at: todayISO() });
+  if (!DONE.includes(c.status) && c.status !== 'Revision Request' && STATUSES.indexOf(c.status) >= STATUSES.indexOf('Prelim Sent')) c.status = 'Revision Request';
+  c.lastUpdate = todayISO();
+  save(); refreshViews(); setTimeout(() => $('#revText') && $('#revText').focus(), 30);
+});
+
+// ---------- log contact ----------
+const LOG_OUTCOMES = {
+  call: ['reached', 'no_answer', 'voicemail', 'callback', 'scheduled', 'confirmed', 'bad_number', 'note'],
+  text: ['text_sent', 'reached', 'scheduled', 'confirmed', 'bad_number', 'note'],
+  email: ['text_sent', 'reached', 'scheduled', 'note'],
+  person: ['reached', 'scheduled', 'confirmed', 'no_show', 'note']
+};
+const logDlg = $('#logDlg');
+let logState = null;
+function openLog(id, method = 'call', outcome = null) {
+  const c = claimById(id); if (!c) return;
+  logState = { id, method, outcome: null, nextTouched: false };
+  $('#logWho').textContent = c.insured + (textPhone(c) ? ' · ' + fmtPhone(textPhone(c)) : '');
+  $('#logNote').value = ''; $('#logDate').value = ''; $('#logTime').value = '';
+  setLogMethod(method);
+  if (outcome) setLogOutcome(outcome);
+  logDlg.showModal();
+}
+function setLogMethod(m) {
+  logState.method = m;
+  $$('#logMethod button').forEach(b => b.classList.toggle('active', b.dataset.v === m));
+  $('#logOutcome').innerHTML = LOG_OUTCOMES[m].map(o => `<button type="button" class="btn" data-o="${o}">${OUTCOMES[o].icon} ${o === 'text_sent' && m === 'email' ? 'Sent' : o === 'reached' && m === 'text' ? 'They replied' : OUTCOMES[o].label}</button>`).join('');
+  if (logState.outcome && LOG_OUTCOMES[m].includes(logState.outcome)) setLogOutcome(logState.outcome); else { logState.outcome = null; $('#logSave').disabled = true; $('#logSched').hidden = true; $('#logNextWrap').hidden = true; $('#logNextHint').textContent = ''; }
+}
+function setLogOutcome(o) {
+  const c = claimById(logState.id);
+  logState.outcome = o; logState.nextTouched = false;
+  $$('#logOutcome button').forEach(b => b.classList.toggle('active', b.dataset.o === o));
+  $('#logSave').disabled = false;
+  $('#logSched').hidden = o !== 'scheduled';
+  if (o === 'scheduled' && !$('#logDate').value) { $('#logDate').value = c.inspectDate || addDays(todayISO(), 1); $('#logTime').value = c.inspectTime || ''; }
+  let next = null, hint = '';
+  const h = retryHours(o, unansweredCount(c) + 1);
+  if (h) { next = clampToCallingHours(new Date(Date.now() + h * 3600e3)); hint = `Suggested: try again in ${h} hour${h > 1 ? 's' : ''}${h === 24 ? '' : ''}, inside calling hours.`; }
+  else if (o === 'callback') { next = clampToCallingHours(new Date(Date.now() + 2 * 3600e3)); hint = 'When did they ask you to call back?'; }
+  else if (o === 'note' || o === 'confirm_sent') { next = c.nextAt ? new Date(c.nextAt) : null; }
+  const show = !!h || o === 'callback' || o === 'note';
+  $('#logNextWrap').hidden = !show;
+  $('#logNext').value = next ? toLocalInput(next.toISOString()) : '';
+  $('#logNextHint').textContent = hint || (o === 'bad_number' ? 'This claim will show under Needs attention until you add a working number.' : '');
+}
+$('#logMethod').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) setLogMethod(b.dataset.v); });
+$('#logOutcome').addEventListener('click', e => { const b = e.target.closest('[data-o]'); if (b) setLogOutcome(b.dataset.o); });
+$('#logNext').addEventListener('input', () => { logState.nextTouched = true; });
+$$('#logDlg [data-close]').forEach(b => b.addEventListener('click', () => logDlg.close()));
+$('#logForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const c = claimById(logState.id); if (!c || !logState.outcome) return;
+  const o = logState.outcome;
+  if (o === 'scheduled' && !$('#logDate').value) { toast('Pick the inspection date.'); return; }
+  const opts = { method: logState.method, outcome: o, note: $('#logNote').value.trim() };
+  if (!$('#logNextWrap').hidden) { const v = $('#logNext').value; opts.nextAt = v ? new Date(v).toISOString() : null; }
+  if (o === 'scheduled') { opts.date = $('#logDate').value; opts.time = $('#logTime').value; }
+  if (o === 'bad_number') c.badNumberWas = textPhone(c);
+  addContact(c, opts);
+  save(); logDlg.close(); refreshViews();
+  if (o === 'scheduled') toastAction(`✓ Booked ${esc(dayShort(opts.date))}${opts.time ? ' ' + fmtClock(hm(opts.time)) : ''}.`, 'Send confirmation', () => openText(c.id, 'confirm'), 8000);
+  else toast(`✓ Logged: ${esc(OUTCOMES[o].label)}${c.nextAt && followUp(c) ? ' · next ' + esc(fmtWhen(c.nextAt)) : ''}`);
+});
+
+// ---------- text messages (incl. offer 3 times) ----------
+const textDlg = $('#textDlg');
+let textState = null;
+function openText(id, tpl) {
+  const c = claimById(id); if (!c) return;
+  tpl = tpl || (c.inspectDate && UNINSPECTED.includes(c.status) ? 'confirm' : unansweredCount(c) ? 'intro' : 'offer');
+  if (tpl === 'offer' && !c.address) tpl = 'intro';
+  textState = { id, tpl, slots: [], alts: [], seq: 0 };
+  $('#textWho').textContent = c.insured;
+  $('#textTo').value = textPhone(c);
+  $('#tplPick').innerHTML = Object.keys(TEMPLATE_NAMES).map(k => `<button type="button" data-tpl-pick="${k}">${esc(TEMPLATE_NAMES[k])}</button>`).join('') + '<button type="button" data-tpl-pick="blank">Blank</button>';
+  $('#textHint').innerHTML = !S().me.name ? '⚠ Add your name under <b>Settings → You</b> so texts say who you are.' : '';
+  textDlg.showModal();
+  pickTemplate(tpl);
+}
+function pickTemplate(k) {
+  textState.tpl = k;
+  $$('#tplPick button').forEach(b => b.classList.toggle('active', b.dataset.tplPick === k));
+  $('#textTitle').textContent = k === 'offer' ? 'Offer inspection times' : 'Text';
+  $('#offerBox').hidden = k !== 'offer';
+  if (k === 'offer' && !textState.slots.length) loadOffer(); else fillTextBody();
+}
+function fillTextBody() {
+  const c = claimById(textState.id), k = textState.tpl;
+  $('#textBody').value = k === 'blank' ? '' : fillTemplate(S().templates[k], c, { options: optionsText(textState.slots) });
+  updateSendLink();
+}
+async function loadOffer() {
+  const c = claimById(textState.id), seq = ++textState.seq;
+  $('#offerSlots').innerHTML = ''; $('#offerAlts').innerHTML = ''; $('#offerMore').hidden = true;
+  $('#textBody').value = ''; updateSendLink();
+  const status = t => { if (seq === textState.seq) $('#offerStatus').innerHTML = t; };
+  status('Finding the best openings…');
+  try {
+    const r = await findOfferSlots(c, status);
+    if (seq !== textState.seq || !textDlg.open) return;
+    textState.slots = r.picks; textState.alts = r.alts;
+    status(`Picked to add the least driving to what you already have booked${r.realRoads ? '' : ' (straight-line estimates – road routing unavailable)'}.`);
+    renderOfferSlots(); fillTextBody();
+  } catch (e) { status(`<span class="stale-warn">${esc(e.message)}</span>`); }
+}
+function renderOfferSlots() {
+  const desc = s => `${s.added < 1 ? 'no extra driving' : '+' + Math.round(s.added) + ' min driving'}${s.near ? ' · near ' + esc(s.near) : ''}`;
+  $('#offerSlots').innerHTML = textState.slots.map((s, i) => `<div class="slot"><b>${i + 1})</b> <span>${esc(slotLabel(s))}<br><span class="muted small">${desc(s)}</span></span><button type="button" class="btn icon small" data-rmslot="${i}" title="Remove">✕</button></div>`).join('');
+  $('#offerMore').hidden = !textState.alts.length;
+  $('#offerAlts').innerHTML = textState.alts.map((s, i) => `<button type="button" class="chip" data-addslot="${i}" title="${desc(s).replace(/<[^>]+>/g, '')}">${esc(slotLabel(s))}</button>`).join('');
+}
+$('#offerBox').addEventListener('click', e => {
+  const rm = e.target.closest('[data-rmslot]'), add = e.target.closest('[data-addslot]');
+  if (rm) { textState.alts.unshift(textState.slots.splice(+rm.dataset.rmslot, 1)[0]); }
+  else if (add) {
+    if (textState.slots.length >= 3) { toast('Remove one of the 3 times first.'); return; }
+    textState.slots.push(textState.alts.splice(+add.dataset.addslot, 1)[0]);
+    textState.slots.sort((a, b) => a.date.localeCompare(b.date) || a.t - b.t);
+  } else return;
+  renderOfferSlots(); fillTextBody();
+});
+$('#tplPick').addEventListener('click', e => { const b = e.target.closest('[data-tpl-pick]'); if (b) pickTemplate(b.dataset.tplPick); });
+// The QR code holds the number and message; scanning it with a phone camera opens Messages ready to send.
+let qrTimer = null;
+function updateSendLink() { clearTimeout(qrTimer); qrTimer = setTimeout(renderQR, 150); }
+function renderQR() {
+  const box = $('#textQR'), to = phoneDigits($('#textTo').value), body = $('#textBody').value.trim();
+  if (!to || !body) { box.innerHTML = `<div class="qr-empty">${!to ? 'Add a phone number' : 'Write a message'} to get a scan code.</div>`; return; }
+  if (typeof qrcode === 'undefined') { box.innerHTML = '<div class="qr-empty">The scan code needs an internet connection to load. Use <b>Copy</b> instead.</div>'; return; }
+  try {
+    qrcode.stringToBytes = qrcode.stringToBytesFuncs['UTF-8'];
+    const qr = qrcode(0, 'L'); qr.addData(`SMSTO:${to}:${body}`, 'Byte'); qr.make();
+    box.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 3, scalable: true });
+  } catch (e) { box.innerHTML = '<div class="qr-empty">That message is too long for a scan code. Use <b>Copy</b> instead.</div>'; }
+}
+['textBody', 'textTo'].forEach(id => $('#' + id).addEventListener('input', updateSendLink));
+$$('#textDlg [data-close]').forEach(b => b.addEventListener('click', () => textDlg.close()));
+function logText() {
+  const c = claimById(textState.id); if (!c) return;
+  const k = textState.tpl;
+  const before = JSON.stringify(c);
+  if (k === 'offer' && textState.slots.length) {
+    c.offer = { at: new Date().toISOString(), slots: textState.slots.map(s => ({ date: s.date, time: s.time })) };
+    addContact(c, { method: 'text', outcome: 'offered', note: textState.slots.map((s, i) => `${i + 1}) ${slotLabel(s)}`).join('  ') });
+  } else addContact(c, { method: 'text', outcome: k === 'confirm' ? 'confirm_sent' : 'text_sent', note: k === 'blank' ? '' : TEMPLATE_NAMES[k] });
+  if (textPhone(c) !== $('#textTo').value.trim() && $('#textTo').value.trim()) { if (!c.cell) c.cell = fmtPhone($('#textTo').value); }
+  save(); refreshViews();
+  toastAction('✓ Logged as texted.', 'Undo', () => { const i = state.claims.findIndex(x => x.id === c.id); if (i >= 0) { state.claims[i] = JSON.parse(before); save(); refreshViews(); } }, 8000);
+}
+$('#textSent').addEventListener('click', () => {
+  if (!$('#textBody').value.trim()) { toast('Write a message first.'); return; }
+  if (textState.tpl === 'offer' && !textState.slots.length) { toast('No times picked yet.'); return; }
+  logText();
+  textDlg.close();
+});
+$('#textCopy').addEventListener('click', async () => {
+  if (!(await copyText($('#textBody').value))) { toast('Couldn\'t copy – select the text and copy it.'); return; }
+  toast('Copied. Paste it into a text to ' + esc(fmtPhone($('#textTo').value) || 'them') + ', then click <b>I sent it</b>.', 5000);
+});
+</script>
+<script>
+// ===== ui-settings.js =====
+'use strict';
+// ---------- settings ----------
+function renderSettings() {
+  const s = S();
+  $('#meName').value = s.me.name; $('#mePhone').value = s.me.phone;
+  $('#callOpen').value = s.contact.open; $('#callClose').value = s.contact.close;
+  $('#offStart').value = String(s.offer.startIn); $('#offDays').value = s.offer.days; $('#offStep').value = String(s.offer.step);
+  $('#tplRows').innerHTML = Object.keys(TEMPLATE_NAMES).map(k => `<label class="f">${esc(TEMPLATE_NAMES[k])}${s.templates[k] !== DEFAULT_TEMPLATES[k] ? ` <a href="#" data-tplreset="${k}" class="small">reset</a>` : ''}<textarea rows="3" data-tpl-edit="${k}">${esc(s.templates[k])}</textarea></label>`).join('');
+  $('#stepRows').innerHTML = s.steps.map((st, i) => `<div class="step-row"><input data-step-label="${i}" value="${esc(st.label)}"><select data-step-status="${i}" title="Move the claim to this status when ticked"><option value="">No status change</option>${STATUSES.map(x => `<option ${x === st.status ? 'selected' : ''}>${x}</option>`).join('')}</select><button class="btn icon small" data-step-up="${i}" title="Move up" ${i ? '' : 'disabled'}>↑</button><button class="btn icon small danger" data-step-del="${i}" title="Remove">✕</button></div>`).join('');
+  $('#sA').value = s.pay.a; $('#sB').value = s.pay.b; $('#sC').value = s.pay.c; $('#sD').value = s.pay.d;
+  $('#sSupp').value = s.supplementalFee;
+  $('#payCheck').textContent = `Check: biller $1,650 → ${usd2(payFor(1650))} · biller $10,736 → ${usd2(payFor(10736))}`;
+  $('#eventRows').innerHTML = s.events.map((e, i) => `<tr><td>${esc(e.name)}</td><td><input type="date" data-evdol="${i}" value="${esc(e.dol)}"></td><td><button class="btn small danger" data-evdel="${i}">Remove</button></td></tr>`).join('');
+  const f = s.fees; let prev = 0;
+  const rows = [['Erroneous Assignment', 'erroneous'], ['Claim Withdrawn', 'withdrawn'], ['Closed Without Payment (CWOP)', 'cwop']]
+    .map(([l, k]) => `<tr><td><i>${l}</i></td><td>$<input type="number" data-fee="${k}" value="${f[k]}"></td><td></td></tr>`);
+  f.tiers.forEach((t, i) => {
+    const range = `${usd2(prev + 0.01)} – ${t.max === null ? 'and higher' : usd2(t.max)}`; prev = t.max || prev;
+    rows.push(t.flat !== undefined
+      ? `<tr><td>${range}</td><td>$<input type="number" data-tier="${i}" data-f="flat" value="${t.flat}"></td><td></td></tr>`
+      : `<tr><td>${range}</td><td><input type="number" step="0.1" data-tier="${i}" data-f="pct" value="${t.pct}">%</td><td>$<input type="number" data-tier="${i}" data-f="min" value="${t.min}"></td></tr>`);
+  });
+  $('#feeRows').innerHTML = rows.join('');
+  renderAdstrat(); renderBackup();
+}
+const setAndSave = fn => e => { fn(e); save(); };
+$('#meName').addEventListener('change', setAndSave(e => { S().me.name = e.target.value.trim(); }));
+$('#mePhone').addEventListener('change', setAndSave(e => { S().me.phone = fmtPhone(e.target.value); e.target.value = S().me.phone; }));
+$('#callOpen').addEventListener('change', setAndSave(e => { if (e.target.value) S().contact.open = e.target.value; }));
+$('#callClose').addEventListener('change', setAndSave(e => { if (e.target.value) S().contact.close = e.target.value; }));
+$('#offStart').addEventListener('change', setAndSave(e => { S().offer.startIn = +e.target.value; }));
+$('#offDays').addEventListener('change', setAndSave(e => { S().offer.days = Math.min(30, Math.max(1, num(e.target.value) || 7)); }));
+$('#offStep').addEventListener('change', setAndSave(e => { S().offer.step = +e.target.value; }));
+$('#tplRows').addEventListener('change', e => { const k = e.target.dataset.tplEdit; if (k) { S().templates[k] = e.target.value; save(); } });
+$('#tplRows').addEventListener('click', e => { const k = e.target.dataset.tplreset; if (k) { e.preventDefault(); S().templates[k] = DEFAULT_TEMPLATES[k]; save(); renderSettings(); } });
+$('#stepRows').addEventListener('change', e => {
+  const t = e.target, st = S().steps;
+  if (t.dataset.stepLabel !== undefined) st[+t.dataset.stepLabel].label = t.value.trim() || st[+t.dataset.stepLabel].label;
+  if (t.dataset.stepStatus !== undefined) { if (t.value) st[+t.dataset.stepStatus].status = t.value; else delete st[+t.dataset.stepStatus].status; }
+  save();
+});
+$('#stepRows').addEventListener('click', e => {
+  const st = S().steps, up = e.target.closest('[data-step-up]'), del = e.target.closest('[data-step-del]');
+  if (up) { const i = +up.dataset.stepUp; [st[i - 1], st[i]] = [st[i], st[i - 1]]; }
+  else if (del) { if (!confirm(`Remove "${st[+del.dataset.stepDel].label}" from the checklist?`)) return; st.splice(+del.dataset.stepDel, 1); }
+  else return;
+  save(); renderSettings();
+});
+$('#addStep').addEventListener('click', () => { const v = $('#newStep').value.trim(); if (!v) return; S().steps.push({ key: 's' + uid().slice(0, 6), label: v }); $('#newStep').value = ''; save(); renderSettings(); });
+$('#resetSteps').addEventListener('click', () => { if (confirm('Reset the checklist to the default steps? Ticks on claims for removed steps are hidden.')) { S().steps = clone(DEFAULT_STEPS); save(); renderSettings(); } });
+['sA', 'sB', 'sC', 'sD'].forEach((id, i) => $('#' + id).addEventListener('change', e => { S().pay['abcd'[i]] = num(e.target.value); save(); renderSettings(); }));
+$('#sSupp').addEventListener('change', e => { S().supplementalFee = num(e.target.value); save(); });
+$('#feeRows').addEventListener('change', e => {
+  const t = e.target;
+  if (t.dataset.fee) S().fees[t.dataset.fee] = num(t.value);
+  if (t.dataset.tier) S().fees.tiers[+t.dataset.tier][t.dataset.f] = num(t.value);
+  save();
+});
+$('#resetFees').addEventListener('click', () => { S().fees = clone(FEE_2023); save(); renderSettings(); });
+$('#eventRows').addEventListener('change', e => { const i = e.target.dataset.evdol; if (i !== undefined) { S().events[+i].dol = e.target.value; save(); } });
+$('#eventRows').addEventListener('click', e => { const i = e.target.dataset.evdel; if (i !== undefined) { S().events.splice(+i, 1); save(); renderSettings(); renderFilters(); } });
+$('#addEvent').addEventListener('click', () => {
+  const n = $('#newEvName').value.trim(); if (!n) return;
+  S().events.push({ name: n, dol: $('#newEvDol').value }); $('#newEvName').value = ''; $('#newEvDol').value = '';
+  save(); renderSettings(); renderFilters();
+});
+
+// ---------- planner controls ----------
+function initPlannerControls() {
+  const P = S().plan;
+  $('#pLodging').value = S().lodging.address;
+  if (!$('#pStart').value) $('#pStart').value = addDays(todayISO(), 1);
+  $('#pMin').value = P.minStops; $('#pExtra').value = P.extraMin; $('#pMax').value = P.maxStops; $('#pStartMode').value = P.startMode; $('#pLeave').value = P.leave; $('#pBack').value = P.back;
+  $('#pInspect').value = P.inspectMin; $('#pSkip').value = P.skip; $('#pReplan').checked = P.replan; $('#pGap').value = P.gap || 0; $('#pWeek').value = P.weekMax || '';
+  if (isPhone() && state.lastPlan) $('.plan-settings').open = false;
+  renderStays(); renderBlocked();
+}
+$('#pLodging').addEventListener('change', e => { if (S().lodging.address !== e.target.value.trim()) S().lodging = { address: e.target.value.trim(), lat: null, lng: null }; save(); });
+[['pMin', 'minStops', num], ['pExtra', 'extraMin', num], ['pMax', 'maxStops', num], ['pStartMode', 'startMode'], ['pLeave', 'leave'], ['pBack', 'back'], ['pInspect', 'inspectMin', num], ['pSkip', 'skip'], ['pGap', 'gap', num], ['pWeek', 'weekMax', num]].forEach(([id, k, fn]) =>
+  $('#' + id).addEventListener('change', e => { S().plan[k] = fn ? fn(e.target.value) : e.target.value; save(); }));
+$('#pReplan').addEventListener('change', e => { S().plan.replan = e.target.checked; save(); });
+function renderBlocked() {
+  const b = (S().plan.blocked || []).filter(d => d >= todayISO()).sort();
+  $('#pBlocked').innerHTML = b.map(d => `<span class="chip">${esc(dayShort(d))} <button type="button" data-unblock="${d}" aria-label="Unblock">✕</button></span>`).join('') || '<span class="muted small">None</span>';
+}
+$('#pBlockAdd').addEventListener('click', () => {
+  const d = $('#pBlockDate').value; if (!d) return;
+  const P = S().plan; P.blocked = [...new Set([...(P.blocked || []).filter(x => x >= todayISO()), d])].sort();
+  $('#pBlockDate').value = ''; save(); renderBlocked();
+});
+$('#pBlocked').addEventListener('click', e => { const d = e.target.dataset.unblock; if (d) { S().plan.blocked = S().plan.blocked.filter(x => x !== d); save(); renderBlocked(); } });
+function renderStays() {
+  const stays = S().stays;
+  $('#stayRows').innerHTML = stays.map((s, i) => `<div class="stay-row">Night of
+    <input type="date" data-stay="${i}" data-k="date" value="${esc(s.date)}">
+    <input data-stay="${i}" data-k="address" value="${esc(s.address)}" placeholder="Where you'll stay that night">
+    <button type="button" class="btn small danger" data-staydel="${i}" title="Remove">✕</button></div>`).join('');
+  $('#stayHelp').style.display = stays.length ? '' : 'none';
+}
+$('#addStay').addEventListener('click', () => {
+  const last = S().stays.map(s => s.date).filter(Boolean).sort().pop();
+  S().stays.push({ date: last ? addDays(last, 1) : ($('#pStart').value || addDays(todayISO(), 1)), address: '', lat: null, lng: null });
+  save(); renderStays(); $('#stayRows .stay-row:last-child input[data-k="address"]').focus();
+});
+$('#stayRows').addEventListener('change', e => {
+  const i = e.target.dataset.stay; if (i === undefined) return;
+  const s = S().stays[+i], v = e.target.value.trim();
+  if (e.target.dataset.k === 'address' && v !== s.address) { s.lat = s.lng = null; }
+  s[e.target.dataset.k] = v; save();
+});
+$('#stayRows').addEventListener('click', e => { const i = e.target.dataset.staydel; if (i !== undefined) { S().stays.splice(+i, 1); save(); renderStays(); } });
+$('#buildPlan').addEventListener('click', buildPlan);
+$('#applyPlan').addEventListener('click', applyPlan);
+$('#printPlan').addEventListener('click', () => window.print());
+$('#planDays').addEventListener('click', e => { const a = e.target.closest('[data-open]'); if (a) { e.preventDefault(); e.stopPropagation(); openClaim(a.dataset.open); } });
+
+// ---------- import / export ----------
+function parseDelimited(text) {
+  const delim = text.split('\n')[0].includes('\t') ? '\t' : ',';
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === delim) { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += ch;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(c => c.trim()));
+}
+const HEADER_MAP = {
+  event: 'event', insured: 'insured', 'claim #': 'claimNo', 'claim no': 'claimNo', 'claim number': 'claimNo', claim: 'claimNo', 'file #': 'claimNo',
+  type: 'type', reserves: 'reserves', reserve: 'reserves', 'gross loss': 'grossLoss', biller: 'biller', fee: 'biller', pay: 'pay', status: 'status', priority: 'priority',
+  'last update': 'lastUpdate', 'inspection date': 'inspectDate', inspection: 'inspectDate', 'inspection time': 'inspectTime', address: 'address', 'property address': 'address',
+  'loss address': 'address', phone: 'phone', cell: 'cell', mobile: 'cell', 'cell phone': 'cell', notes: 'notes', 'available from': 'availFrom', 'available until': 'availTo'
+};
+function importRows(text) {
+  const rows = parseDelimited(text);
+  if (rows.length < 2) return 'Need a header row plus at least one claim row.';
+  const head = rows[0].map(h => HEADER_MAP[h.trim().toLowerCase().replace(/\s+/g, ' ')] || null);
+  if (!head.includes('insured')) return 'Could not find an "Insured" column in the header row.';
+  let added = 0, overrides = 0;
+  for (const r of rows.slice(1)) {
+    const o = {}; head.forEach((k, i) => { if (k) o[k] = (r[i] || '').trim(); });
+    if (!o.insured) continue;
+    const typeRaw = (o.type || '').toLowerCase();
+    const type = /cwop|without/.test(typeRaw) ? 'cwop' : /withdr/.test(typeRaw) ? 'withdrawn' : /errone/.test(typeRaw) ? 'erroneous' : /supp/.test(typeRaw) || /supplement/i.test(o.insured) ? 'supplemental' : 'standard';
+    const st = normStatus(o.status) || 'Need to Contact';
+    const pr = (o.priority || '').toLowerCase();
+    const c = normalizeClaim({
+      id: uid(), event: o.event || '', insured: o.insured, claimNo: o.claimNo || '', type, priority: PRIO_RANK[pr] !== undefined ? pr : 'normal',
+      reserves: hasNum(o.reserves) ? String(num(o.reserves)) : '', grossLoss: hasNum(o.grossLoss) ? String(num(o.grossLoss)) : '', billerOverride: '',
+      status: st, lastUpdate: parseDate(o.lastUpdate), inspectDate: parseDate(o.inspectDate), inspectTime: parseTime(o.inspectTime),
+      availFrom: parseTime(o.availFrom), availTo: parseTime(o.availTo),
+      address: o.address || '', phone: fmtPhone(o.phone || ''), cell: fmtPhone(o.cell || ''), notes: o.notes || '', lat: null, lng: null
+    });
+    const p = S().pay;
+    const oldFee = hasNum(o.pay) ? (num(o.pay) / (p.c * p.d) + p.b) / p.a : hasNum(o.biller) ? num(o.biller) : null;
+    if (oldFee !== null && Math.abs(payFor(oldFee) - payFor(feeFor(c).fee)) >= 0.01) { c.billerOverride = String(Math.round(oldFee * 100) / 100); overrides++; }
+    if (c.event && !S().events.some(x => x.name.toLowerCase() === c.event.toLowerCase())) S().events.push({ name: c.event, dol: '' });
+    state.claims.push(c); added++;
+  }
+  save(); renderAll();
+  return `Imported ${added} claim${added === 1 ? '' : 's'}.` + (overrides ? ` ${overrides} kept their original biller as an override (didn't match the schedule).` : '');
+}
+$('#importPaste').addEventListener('click', () => { const v = $('#pasteBox').value; $('#importNote').textContent = v.includes(AS_MARK) ? runAdstratImport(v) : importRows(v); $('#pasteBox').value = ''; });
+$('#csvFile').addEventListener('change', async e => { const f = e.target.files[0]; if (f) $('#importNote').textContent = importRows(await f.text()); e.target.value = ''; });
+$('#exportCsv').addEventListener('click', () => {
+  const cols = [['Event', 'event'], ['Insured', 'insured'], ['Claim #', 'claimNo'], ['Type', 'type'], ['Priority', 'priority'], ['Reserves', 'reserves'], ['Gross Loss', 'grossLoss'], ['Biller', 'biller'], ['Pay', 'pay'], ['Status', 'status'], ['Days Since Update', 'days'], ['Last Update', 'lastUpdate'], ['Inspection Date', 'inspectDate'], ['Inspection Time', 'inspectTime'], ['Appointment', 'appt'], ['Next Contact', 'nextAt'], ['Contact Attempts', 'attempts'], ['Available From', 'availFrom'], ['Available Until', 'availTo'], ['Address', 'address'], ['Cell', 'cell'], ['Phone', 'phone'], ['Notes', 'notes']];
+  const q = v => { v = v ?? ''; v = String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  const lines = [cols.map(c => c[0]).join(',')].concat(state.claims.map(enrich).map(c => cols.map(([, k]) => q(k === 'attempts' ? (c.contacts || []).length : k === 'nextAt' ? (c.nextAt ? fmtWhen(c.nextAt) : '') : c[k])).join(',')));
+  download(`claims-${todayISO()}.csv`, '\ufeff' + lines.join('\r\n'), 'text/csv');
+});
+$('#clearAll').addEventListener('click', () => {
+  if (!confirm('Delete ALL claims? Consider making a backup first.')) return;
+  state.claims = []; state.lastPlan = null; save(); renderAll();
+});
+
+// ---------- backups ----------
+const BK_KEY = 'adjusterClaimTracker.backup';
+let bk = null, bkDir = null, bkTimer = null, bkBusy = false;
+const canPickFolder = typeof window.showDirectoryPicker === 'function';
+function bkSave() { localStorage.setItem(BK_KEY, JSON.stringify(bk)); }
+function idbKV(mode, op) {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('adjusterClaimTracker', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onerror = () => rej(r.error);
+    r.onsuccess = () => { const tx = r.result.transaction('kv', mode); const q = op(tx.objectStore('kv')); tx.oncomplete = () => { r.result.close(); res(q.result); }; tx.onerror = () => rej(tx.error); };
+  });
+}
+const unsaved = () => state.claims.length > 0 && (!bk.lastBackup || (bk.lastChange && bk.lastChange > bk.lastBackup));
+const overdue = () => unsaved() && (!bk.lastBackup || Date.now() - new Date(bk.lastBackup) > bk.remindDays * 864e5);
+async function folderPermission(ask) {
+  if (!bkDir) return 'none';
+  const opts = { mode: 'readwrite' };
+  let p = await bkDir.queryPermission(opts);
+  if (p !== 'granted' && ask) p = await bkDir.requestPermission(opts);
+  return p;
+}
+const backupText = () => JSON.stringify({ claims: state.claims, settings: state.settings, lastPlan: state.lastPlan, exported: new Date().toISOString(), app: 'claim-tracker v2' }, null, 2);
+function markBackedUp(msg) { bk.lastBackup = new Date().toISOString(); bkSave(); if (msg) $('#bkNote').textContent = msg; renderBackup(); }
+async function writeFile(dir, name, text) { const fh = await dir.getFileHandle(name, { create: true }); const w = await fh.createWritable(); await w.write(text); await w.close(); }
+async function backupToFolder() {
+  if (bkBusy) return; bkBusy = true;
+  try {
+    const text = backupText();
+    await writeFile(bkDir, 'claim-tracker-backup-latest.json', text);
+    await writeFile(bkDir, `claim-tracker-backup-${todayISO()}.json`, text);
+    const cutoff = addDays(todayISO(), -30);
+    for await (const [name] of bkDir.entries()) {
+      const m = /^claim-tracker-backup-(\d{4}-\d{2}-\d{2})\.json$/.exec(name);
+      if (m && m[1] < cutoff) await bkDir.removeEntry(name).catch(() => { });
+    }
+    markBackedUp('');
+  } catch (e) { $('#bkNote').textContent = 'Backup to folder failed: ' + e.message; renderBackup(); }
+  finally { bkBusy = false; }
+}
+function onDataChanged() {
+  if (!bk) return;
+  bk.lastChange = new Date().toISOString(); bkSave();
+  clearTimeout(bkTimer);
+  bkTimer = setTimeout(async () => { if ((await folderPermission(false).catch(() => 'none')) === 'granted') await backupToFolder(); else renderBackup(); }, 3000);
+  renderBackup();
+}
+async function backupNow() {
+  if (bkDir) {
+    if ((await folderPermission(true)) === 'granted') { await backupToFolder(); $('#bkNote').textContent = `Backed up to “${bk.folderName}”.`; return; }
+    $('#bkNote').textContent = 'Folder access was not allowed, so a backup file was downloaded instead.';
+  }
+  download(`claim-tracker-backup-${todayISO()}.json`, backupText(), 'application/json');
+  markBackedUp(bkDir ? null : 'Downloaded a backup file. Keep it somewhere safe.');
+}
+async function renderBackup() {
+  if (!bk) return;
+  const perm = await folderPermission(false).catch(() => 'none');
+  const connected = perm === 'granted';
+  const btn = $('#backupBtn');
+  btn.classList.toggle('warn', overdue() || (!!bkDir && !connected && unsaved()));
+  btn.textContent = bkDir && !connected ? '⚠ Reconnect backup' : overdue() ? '⚠ Back up now' : unsaved() || !bk.lastBackup ? 'Back up' : '✓ Backed up';
+  btn.title = `Last backup: ${ago(bk.lastBackup)}` + (bkDir ? ` · Folder: ${bk.folderName}` : '');
+  $('#bkIntro').textContent = 'Your claims are stored only in this browser on this computer. Clearing browser data or switching computers would lose them, so keep a backup.';
+  const status = !bkDir
+    ? (canPickFolder ? 'Auto-backup to a folder is <b>off</b>.' : 'This browser can\'t save to a folder automatically. Use <b>Download backup file</b> instead.')
+    : connected ? `Auto-backup is <b>on</b> → <b>${esc(bk.folderName)}</b>`
+    : `Auto-backup folder <b>${esc(bk.folderName)}</b> needs permission again. Click <b>Back up now</b> and choose <b>Allow</b>.`;
+  $('#bkStatus').innerHTML = `${status}<div class="muted small">Last backup: ${ago(bk.lastBackup)}${unsaved() ? ' · <span class="stale-warn">changes since then</span>' : ''}</div>`;
+  $('#bkFolder').style.display = canPickFolder ? '' : 'none';
+  $('#bkPick').textContent = bkDir ? 'Change backup folder…' : 'Choose backup folder…';
+  $('#bkOff').style.display = bkDir ? '' : 'none';
+  $('#bkDays').value = bk.remindDays;
+}
+$('#backupBtn').addEventListener('click', backupNow);
+$('#bkNow').addEventListener('click', backupNow);
+$('#backupJson').addEventListener('click', () => { download(`claim-tracker-backup-${todayISO()}.json`, backupText(), 'application/json'); markBackedUp('Downloaded a backup file. Keep it somewhere safe.'); });
+$('#jsonFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const s = JSON.parse(await f.text()); if (!Array.isArray(s.claims)) throw new Error('not a tracker backup');
+    if (!confirm(`Replace current data with ${s.claims.length} claims from this backup?`)) return;
+    const n = normalizeState(s); state.claims = n.claims; state.settings = n.settings; state.lastPlan = n.lastPlan;
+    save(); renderAll(); initPlannerControls(); renderSettings(); $('#bkNote').textContent = 'Backup restored.';
+  } catch (err) { $('#bkNote').textContent = 'Restore failed: ' + err.message; }
+  e.target.value = '';
+});
+$('#bkPick').addEventListener('click', async () => {
+  try {
+    const dir = await window.showDirectoryPicker({ id: 'claimTrackerBackups', mode: 'readwrite', startIn: 'documents' });
+    bkDir = dir; bk.folderName = dir.name; bkSave();
+    await idbKV('readwrite', s => s.put(dir, 'backupDir'));
+    await backupToFolder();
+    $('#bkNote').textContent = `Auto-backup is on. Saved to “${dir.name}”.`;
+  } catch (e) { if (e.name !== 'AbortError') $('#bkNote').textContent = 'Couldn\'t use that folder: ' + e.message; }
+  renderBackup();
+});
+$('#bkOff').addEventListener('click', async () => {
+  bkDir = null; bk.folderName = ''; bkSave();
+  await idbKV('readwrite', s => s.delete('backupDir')).catch(() => { });
+  $('#bkNote').textContent = 'Auto-backup turned off. Existing backup files were left in place.';
+  renderBackup();
+});
+$('#bkDays').addEventListener('change', e => { bk.remindDays = Math.max(1, num(e.target.value) || 3); bkSave(); renderBackup(); });
+async function initBackup() {
+  try { bk = JSON.parse(localStorage.getItem(BK_KEY)); } catch { bk = null; }
+  bk = Object.assign({ lastBackup: null, lastChange: null, remindDays: 3, folderName: '' }, bk || {});
+  if (canPickFolder) { try { bkDir = (await idbKV('readonly', s => s.get('backupDir'))) || null; } catch { bkDir = null; } }
+  await renderBackup();
+  if (unsaved() && (await folderPermission(false).catch(() => 'none')) === 'granted') backupToFolder();
+  setInterval(renderBackup, 60000);
+}
+
+// ---------- theme ----------
+const THEME_KEY = 'adjusterClaimTracker.theme', THEMES = ['auto', 'light', 'dark'];
+const themeLabel = { auto: '🌓', light: '☀️', dark: '🌙' };
+const themeName = { auto: 'Auto (match device)', light: 'Light', dark: 'Dark' };
+let themeMode = localStorage.getItem(THEME_KEY) || 'auto';
+function applyTheme(mode) {
+  const t = mode === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : mode;
+  document.documentElement.setAttribute('data-theme', t);
+  $('meta[name="theme-color"]').content = t === 'dark' ? '#1a1d23' : '#fcfbf8';
+  $('#themeBtn').textContent = themeLabel[mode]; $('#themeBtn').title = 'Theme: ' + themeName[mode] + ' (tap to change)';
+  setTiles();
+}
+$('#themeBtn').addEventListener('click', () => { themeMode = THEMES[(THEMES.indexOf(themeMode) + 1) % THEMES.length]; localStorage.setItem(THEME_KEY, themeMode); applyTheme(themeMode); toast('Theme: ' + themeName[themeMode]); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (themeMode === 'auto') applyTheme('auto'); });
+</script>
+<script>
+// ===== main.js =====
+'use strict';
+let started = false;
+function startApp() {
+  if (started) { renderAll(); return; }
+  started = true;
+  applyTheme(themeMode);
+  wireAdstrat();
+  initPlannerControls();
+  renderAll();
+  renderAdstrat();
+  initBackup();
+  const tab = (location.hash.match(/^#tab=(\w+)/) || [])[1];
+  showTab(['today', 'claims', 'plan', 'settings'].includes(tab) ? tab : 'today');
+  // Keep "due now" labels fresh while the tracker stays open.
+  setInterval(() => { if (document.visibilityState === 'visible' && !document.querySelector('dialog[open]')) { if (currentTab === 'today') renderToday(); else if (currentTab === 'claims') renderClaims(); } }, 60000);
+}
+startApp();
+</script>
+</body>
+</html>
