@@ -62,5 +62,7 @@ password on the others.
 - **Forgot password?** is on the sign-in form; **Change password** is there once signed in.
 - When a device signs in for the first time, the cloud copy of a claim wins over an older copy on
   that device. Claims that only exist on the device are added after asking.
-- AdStrat sync (the extension) and auto-backup to a folder still work on a computer in Chrome. On a
-  phone, sync from AdStrat on the computer and the claims show up on the phone.
+- AdStrat sync (the extension) and auto-backup to a folder work on a computer in Chrome. Turn on
+  **Settings → AdStrat sync → Sync automatically every 30 minutes** and new AdStrat claims reach
+  your phone on their own while Chrome is open on the computer (6 AM–9 PM). Your AdStrat password is
+  never stored; the extension uses your normal AdStrat sign-in in Chrome.

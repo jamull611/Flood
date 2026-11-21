@@ -43,6 +43,13 @@ Everything runs on your computer. Nothing is uploaded anywhere.
   "Sync from AdStrat" on the tracker's Claims tab. It only reads your claim list;
   it never changes anything in AdStrat and never stores your AdStrat password.
 
+  Automatic sync: Settings > AdStrat sync > tick "Sync from AdStrat automatically
+  every 30 minutes". While Chrome is open on this computer and you're signed in to
+  AdStrat, the tracker pulls your claims every 30 minutes from 6 AM to 9 PM. If the
+  tracker isn't open, it opens in a background tab for a few seconds and closes.
+  With cloud sync on, new claims then show up on your phone. If AdStrat signs you
+  out, the extension's icon shows a "!" - click it to sign back in.
+
   No extension? Settings > AdStrat sync has a bookmark button you can use instead.
 
 

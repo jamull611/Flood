@@ -18,8 +18,17 @@ window.addEventListener('message', e => {
       });
     } else if (e.data.type === 'adstrat-open') {
       chrome.runtime.sendMessage({ type: 'adstrat-open' });
+    } else if (e.data.type === 'adstrat-auto') {
+      chrome.runtime.sendMessage({ type: 'adstrat-auto', on: !!e.data.on });
+    } else if (e.data.type === 'autosync-done') {
+      chrome.runtime.sendMessage({ type: 'autosync-done', ok: !!e.data.ok, signedOut: !!e.data.signedOut });
     }
   } catch (err) {
     reply({ ok: false, error: 'The extension was updated or reloaded. Refresh this page and try again.' });
   }
+});
+
+// The extension's timer asks an open tracker to sync from AdStrat.
+chrome.runtime.onMessage.addListener(msg => {
+  if (msg && msg.type === 'autosync') window.postMessage({ source: 'adstrat-ext', type: 'autosync' }, '*');
 });

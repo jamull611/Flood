@@ -580,6 +580,8 @@ h4 { margin: 16px 0 8px; font-size: 14px; display: flex; align-items: center; ga
         <h2>AdStrat sync</h2>
         <div id="extOn" style="display:none">
           <p style="margin-top:0"><span style="color:var(--cp-success);font-weight:600">✓ Chrome extension connected.</span> Click <b>⟳ Sync from AdStrat</b> on the Claims tab any time you're signed in to AdStrat in Chrome.</p>
+          <label class="f check" style="margin:8px 0 4px"><input type="checkbox" id="asAuto"> Sync from AdStrat automatically every 30 minutes (6 AM–9 PM)</label>
+          <p class="muted small" id="asAutoHelp" style="margin:0 0 8px">Works while Chrome is open on this computer and you're signed in to AdStrat (tick <b>Remember Me</b>). If the tracker isn't open, it opens briefly in a background tab, syncs, and closes. With cloud sync on, the claims then show up on your phone. If AdStrat signs you out, the extension's icon shows a <b>!</b>; click it to sign back in.</p>
         </div>
         <div id="extOff">
           <p class="muted small" style="margin-top:0">Install the Chrome extension once, and the Sync button pulls straight from AdStrat whenever you're signed in there. Your AdStrat password is never stored, and nothing in AdStrat is ever changed.</p>
@@ -1295,26 +1297,45 @@ function askExtension() {
     window.postMessage({ source: 'claim-tracker', type: 'adstrat-fetch', id }, '*');
   });
 }
-async function syncViaExtension() {
+async function syncViaExtension(auto) {
   const btn = $('#syncAdstrat'), note = $('#syncNote');
-  btn.disabled = true; note.textContent = 'Pulling your claims from AdStrat…';
+  btn.disabled = true; note.textContent = auto ? 'Automatic sync: pulling your claims from AdStrat…' : 'Pulling your claims from AdStrat…';
   try {
     const res = await askExtension();
     if (res.signedOut) {
       note.innerHTML = 'You\'re not signed in to AdStrat. <a href="#" id="openAs">Open AdStrat</a>, sign in (tick <b>Remember Me</b>), then click Sync again.';
       $('#openAs').addEventListener('click', e => { e.preventDefault(); window.postMessage({ source: 'claim-tracker', type: 'adstrat-open' }, '*'); });
-      return;
+      return { ok: false, signedOut: true };
     }
-    if (!res.ok) { note.textContent = 'Couldn\'t reach AdStrat: ' + (res.error || 'unknown error'); return; }
+    if (!res.ok) { note.textContent = 'Couldn\'t reach AdStrat: ' + (res.error || 'unknown error'); return { ok: false }; }
     const seen = new Set();
     const list = res.pages.flatMap(parseAdstratHtml).filter(c => c.id && !seen.has(c.id) && seen.add(c.id));
-    if (!list.length) { note.textContent = 'AdStrat answered, but no claims were found on your claims list.'; return; }
+    if (!list.length) { note.textContent = 'AdStrat answered, but no claims were found on your claims list.'; return { ok: false }; }
     const r = mergeAdstrat(list);
     S().adstratLast = res.pulled || new Date().toISOString();
     save(); renderAll(); renderAdstrat();
-    note.textContent = syncSummary(r);
-  } catch (e) { note.textContent = 'Sync failed: ' + e.message; }
+    note.textContent = (auto ? 'Automatic sync: ' : '') + syncSummary(r);
+    return { ok: true };
+  } catch (e) { note.textContent = 'Sync failed: ' + e.message; return { ok: false }; }
   finally { btn.disabled = false; }
+}
+// ---------- automatic sync (the extension's timer asks; see the extension's background.js) ----------
+const AUTO_KEY = 'adjusterClaimTracker.adstratAuto';
+const autoOn = () => { try { return localStorage.getItem(AUTO_KEY) === '1'; } catch { return false; } };
+let autoRunning = false;
+async function runAutoSync() {
+  if (autoRunning || !hasExt()) return;
+  autoRunning = true;
+  let res = { ok: false };
+  try {
+    if (window.cloudSync && window.cloudSync.whenReady) await window.cloudSync.whenReady;
+    res = await syncViaExtension(true);
+    if (window.cloudSync && window.cloudSync.flush) await window.cloudSync.flush();
+  } catch (e) { console.error(e); }
+  finally {
+    autoRunning = false;
+    window.postMessage({ source: 'claim-tracker', type: 'autosync-done', ok: !!res.ok, signedOut: !!res.signedOut }, '*');
+  }
 }
 function wireAdstrat() {
   $('#syncAdstrat').addEventListener('click', async () => {
@@ -1337,6 +1358,24 @@ function wireAdstrat() {
     $('#extPath').textContent = dir + '\\claim-tracker-adstrat-extension';
   }
   window.addEventListener('message', e => { if (e.source === window && e.data && e.data.source === 'adstrat-ext' && e.data.type === 'ready') renderAdstrat(); });
+  const tellExt = () => window.postMessage({ source: 'claim-tracker', type: 'adstrat-auto', on: autoOn() }, '*');
+  $('#asAuto').checked = autoOn();
+  $('#asAuto').addEventListener('change', e => {
+    try { localStorage.setItem(AUTO_KEY, e.target.checked ? '1' : '0'); } catch { }
+    tellExt();
+    toast(e.target.checked ? 'Automatic AdStrat sync is on for this computer.' : 'Automatic AdStrat sync is off.');
+  });
+  window.addEventListener('message', e => {
+    if (e.source !== window || !e.data || e.data.source !== 'adstrat-ext') return;
+    if (e.data.type === 'ready') tellExt();
+    if (e.data.type === 'autosync') runAutoSync();
+  });
+  if (hasExt()) tellExt();
+  if (/[?&]autosync=1/.test(location.search)) {
+    let tries = 0;
+    const go = () => hasExt() ? runAutoSync() : ++tries < 40 && setTimeout(go, 500);
+    setTimeout(go, 300);
+  }
 }
 </script>
 <script>
@@ -3316,8 +3355,18 @@ window.TRACKER_CONFIG = {
   }
 
   let authChain = Promise.resolve();
+  let markReady;
+  const whenReady = new Promise(r => { markReady = r; });
   function onAuth(event, session) {
-    authChain = authChain.then(() => handleAuth(event, session)).catch(e => console.error(e));
+    authChain = authChain.then(() => handleAuth(event, session)).catch(e => console.error(e)).then(() => markReady());
+  }
+  // Waits until every change on this device has reached the cloud (or 30 seconds pass).
+  async function flush() {
+    const until = Date.now() + 30000;
+    while (user && meta && Date.now() < until) {
+      if (!busy) { await syncNow(false); if (!busy && !again && !pendingChanges()) return; }
+      await new Promise(r => setTimeout(r, 300));
+    }
   }
   async function handleAuth(event, session) {
     if (event === 'PASSWORD_RECOVERY') {
@@ -3360,7 +3409,7 @@ window.TRACKER_CONFIG = {
   window.addEventListener('online', () => syncNow(false));
   window.addEventListener('offline', renderUi);
   setInterval(() => { if (document.visibilityState === 'visible') syncNow(false); }, 120000);
-  window.cloudSync = { syncNow: () => syncNow(true), merge3 };
+  window.cloudSync = { syncNow: () => syncNow(true), merge3, whenReady, flush };
 })();
 </script>
 <script>
