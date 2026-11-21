@@ -19,7 +19,7 @@ across devices through Supabase.
 ### 1. Create the sync database (Supabase, free)
 1. Create a project at supabase.com.
 2. **SQL Editor → New query**: paste all of `supabase/schema.sql` and click **Run**.
-3. **Project Settings → API**: copy the **Project URL** and the **anon public** key into `config.js`.
+3. **Project Settings → API**: copy the **Project URL** (Data API) and the **publishable** key (API Keys) into `config.js`.
    (The anon key is designed to be public. Your data is protected by sign-in and the row-level security rules.)
 4. **Authentication → URL Configuration**: set **Site URL** to the address where the app is hosted (step 2),
    so email confirmation links come back to the app.
