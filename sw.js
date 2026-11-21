@@ -1,7 +1,7 @@
 // Offline support: keeps the tracker and its libraries on the device so it opens without internet.
 // The app itself is fetched fresh when online (so updates show up), and falls back to the saved copy offline.
-const CACHE = 'claim-tracker-v2';
-const APP = ['./', './adjuster-claim-tracker.html', './config.js', './sync.js', './manifest.webmanifest',
+const CACHE = 'claim-tracker-v3';
+const APP = ['./', './adjuster-claim-tracker.html', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 const LIBS = ['https://unpkg.com/leaflet@1.9.4/dist/leaflet.css', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
   'https://unpkg.com/qrcode-generator@1.4.4/qrcode.js',

@@ -6,9 +6,7 @@ across devices through Supabase.
 
 | File | What it is |
 |---|---|
-| `adjuster-claim-tracker.html` | The app |
-| `sync.js` | Cloud sync (Supabase) |
-| `config.js` | Your Supabase project URL and public key |
+| `adjuster-claim-tracker.html` | The app, including cloud sync and its Supabase settings (`TRACKER_CONFIG`) |
 | `sw.js`, `manifest.webmanifest`, `icons/` | Make it installable and usable offline |
 | `supabase/schema.sql` | Database tables and security rules for sync |
 | `claim-tracker-adstrat-extension/` | Chrome extension that pulls your claim list from AdStrat |
@@ -19,7 +17,7 @@ across devices through Supabase.
 ### 1. Create the sync database (Supabase, free)
 1. Create a project at supabase.com.
 2. **SQL Editor → New query**: paste all of `supabase/schema.sql` and click **Run**.
-3. **Project Settings → API**: copy the **Project URL** (Data API) and the **publishable** key (API Keys) into `config.js`.
+3. **Project Settings → API**: copy the **Project URL** (Data API) and the **publishable** key (API Keys) into `TRACKER_CONFIG` near the bottom of `adjuster-claim-tracker.html`.
    (The anon key is designed to be public. Your data is protected by sign-in and the row-level security rules.)
 4. **Authentication → URL Configuration**: set **Site URL** to the address where the app is hosted (step 2),
    so email confirmation links come back to the app.
