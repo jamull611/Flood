@@ -1,5 +1,6 @@
 -- Adjuster Claim Tracker: cloud sync tables.
 -- Run once in your Supabase project: Dashboard > SQL Editor > New query > paste > Run.
+-- Then run 2-backups.sql the same way.
 -- Each person only ever sees their own rows (row level security below).
 
 create table if not exists public.claims (

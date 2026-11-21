@@ -2,8 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="refresh" content="0; url=adjuster-claim-tracker.html">
 <title>Adjuster Claim Tracker</title>
+<script>
+  // Keep anything after ? or # (password reset and email confirmation links put sign-in details there).
+  location.replace('adjuster-claim-tracker.html' + location.search + location.hash);
+</script>
+<noscript><meta http-equiv="refresh" content="0; url=adjuster-claim-tracker.html"></noscript>
 </head>
 <body><a href="adjuster-claim-tracker.html">Open the Adjuster Claim Tracker</a></body>
 </html>

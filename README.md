@@ -16,11 +16,15 @@ across devices through Supabase.
 
 ### 1. Create the sync database (Supabase, free)
 1. Create a project at supabase.com.
-2. **SQL Editor → New query**: paste all of `supabase/schema.sql` and click **Run**.
+2. **SQL Editor → New query**: paste all of `supabase/schema.sql` and click **Run**. Then do the same with
+   `supabase/2-backups.sql` (daily cloud backups).
 3. **Project Settings → API**: copy the **Project URL** (Data API) and the **publishable** key (API Keys) into `TRACKER_CONFIG` near the bottom of `adjuster-claim-tracker.html`.
    (The anon key is designed to be public. Your data is protected by sign-in and the row-level security rules.)
 4. **Authentication → URL Configuration**: set **Site URL** to the address where the app is hosted (step 2),
-   so email confirmation links come back to the app.
+   and add `https://jamull611.github.io/Flood/**` under **Redirect URLs**, so confirmation and
+   password-reset emails come back to the app.
+5. While it's being tried out: **Authentication → Sign In / Providers → turn off "Allow new users to sign up"**,
+   and add people under **Authentication → Users → Add user**.
 
 ### 2. Host the app
 The app is static files, so any static host works. With GitHub Pages:
@@ -45,11 +49,18 @@ password on the others.
   about a second later, or as soon as you're back online.
 - Other open devices get changes right away. Devices also check when the app comes back to the
   front, and every 2 minutes.
-- Each claim syncs on its own, so editing different claims on two devices never overwrites anything.
-  If the *same* claim is edited on two devices before either one syncs, the change that reaches the
-  cloud last wins.
+- **Edits are merged.** If the same claim is changed on two devices (say, a call logged on the phone
+  with no signal while the computer syncs from AdStrat), both sets of changes are kept: contact-log
+  entries, revision items and checklist steps are combined, and different fields don't overwrite
+  each other. Only when the very same field was changed on both does the device that syncs last win.
+- **Claims belong to one account per device.** Signing in with a different account on a device that
+  has someone else's claims asks first and never mixes them. Signing out offers to remove the claims
+  from the device (they stay in the account).
+- **Nothing is lost by deleting.** Deleted claims can be restored for 30 days (Settings → Cloud sync →
+  Recover deleted claims). The cloud also keeps a daily backup of all claims and settings for 30 days
+  that can be restored in one tap (needs `2-backups.sql`).
+- **Forgot password?** is on the sign-in form; **Change password** is there once signed in.
 - When a device signs in for the first time, the cloud copy of a claim wins over an older copy on
-  that device. Claims that only exist on the device are uploaded.
-- Deleting a claim, or **Clear all**, deletes it on every device.
+  that device. Claims that only exist on the device are added after asking.
 - AdStrat sync (the extension) and auto-backup to a folder still work on a computer in Chrome. On a
   phone, sync from AdStrat on the computer and the claims show up on the phone.

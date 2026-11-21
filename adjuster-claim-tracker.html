@@ -2801,18 +2801,26 @@ window.TRACKER_CONFIG = {
 // ===== sync.js =====
 // Cloud sync through Supabase. The tracker keeps working from this device's storage exactly as
 // before; when you're signed in, every change is also sent to your Supabase account and changes
-// from your other devices are pulled in. Each claim syncs on its own, so editing different claims
-// on two devices never overwrites anything. If the same claim is changed on two devices before
-// either syncs, the change that reaches the cloud last wins.
+// from your other devices are pulled in.
+//
+// Safety rules:
+//  - Each claim syncs on its own. If the same claim was changed on two devices, the changes are merged
+//    field by field (contact log entries and revision items are combined, never dropped). Only when the
+//    very same field was changed on both does the device syncing last win for that field.
+//  - Claims on a device belong to one account. Signing in with a different account never mixes them.
+//  - Deleted claims stay recoverable in the cloud for 30 days, and the cloud keeps a daily backup of
+//    everything for 30 days.
 'use strict';
 (() => {
   const cfg = window.TRACKER_CONFIG || {};
   const META_KEY = 'adjusterClaimTracker.sync';
+  const OWNER_KEY = 'adjusterClaimTracker.owner';
   const PAGE = 1000;
+  const KEEP_DAYS = 30;
   const configured = !!(cfg.supabaseUrl && cfg.supabaseAnonKey);
   const enabled = configured && !!window.supabase;
 
-  // Small fast string hash, enough to tell "has this claim changed since it last synced?"
+  // ---------- helpers ----------
   const hash = s => {
     let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
     for (let i = 0; i < s.length; i++) { const ch = s.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
@@ -2822,19 +2830,98 @@ window.TRACKER_CONFIG = {
   };
   const claimHash = c => hash(JSON.stringify(c));
   const settingsHash = () => hash(JSON.stringify([state.settings, state.lastPlan]));
+  const copy = v => v === undefined ? undefined : JSON.parse(JSON.stringify(v));
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
+  const hasIds = a => Array.isArray(a) && a.every(x => isObj(x) && x.id != null);
+  const dayISO = (d = new Date()) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 
-  // What this device last agreed with the cloud on, per signed-in account.
+  // Three-way merge: what changed on this device (base -> local) is applied on top of the cloud copy.
+  function merge3(base, local, remote) {
+    if (same(local, base)) return copy(remote);
+    if (same(remote, base) || same(local, remote)) return copy(local);
+    if (isObj(base) && isObj(local) && isObj(remote)) {
+      const out = {};
+      for (const k of new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)])) {
+        const v = merge3(base[k], local[k], remote[k]);
+        if (v !== undefined) out[k] = v;
+      }
+      return out;
+    }
+    if (hasIds(local) && hasIds(remote) && (base === undefined || hasIds(base))) {
+      const B = new Map((base || []).map(x => [x.id, x])), L = new Map(local.map(x => [x.id, x]));
+      const out = [];
+      for (const r of remote) {
+        const b = B.get(r.id), l = L.get(r.id);
+        if (!l) { if (!b || !same(b, r)) out.push(copy(r)); continue; }   // deleted here: drop unless changed in the cloud since
+        out.push(b ? merge3(b, l, r) : copy(l));
+      }
+      // Items only on this device: added here (keep), or deleted in the cloud (keep only if changed here since).
+      const R = new Set(remote.map(x => x.id));
+      for (const l of local) if (!R.has(l.id) && (!B.has(l.id) || !same(B.get(l.id), l))) out.push(copy(l));
+      if (out.every(x => x.at)) out.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+      return out;
+    }
+    return copy(local);   // the same value was changed on both devices: this device's change wins
+  }
+
+  // Last-synced copies of each claim, kept in this browser's database (used for merging and recovery).
+  const IDB = 'adjusterClaimTracker.sync';
+  function baseDb(mode, fn) {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open(IDB, 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('base');
+      r.onerror = () => rej(r.error);
+      r.onsuccess = () => {
+        const db = r.result, tx = db.transaction('base', mode), out = fn(tx.objectStore('base'));
+        tx.oncomplete = () => { db.close(); res(out && out.result); };
+        tx.onerror = () => { db.close(); rej(tx.error); };
+      };
+    });
+  }
+  const baseGet = id => baseDb('readonly', s => s.get(id)).catch(() => undefined);
+  const basePut = entries => entries.length ? baseDb('readwrite', s => entries.forEach(([k, v]) => v === undefined ? s.delete(k) : s.put(v, k))).catch(() => { }) : Promise.resolve();
+  const baseClear = () => baseDb('readwrite', s => s.clear()).catch(() => { });
+
+  // ---------- state of this device ----------
   let meta = null;
   const loadMeta = userId => {
     let m = null;
     try { m = JSON.parse(localStorage.getItem(META_KEY)); } catch { }
-    if (!m || m.userId !== userId) m = { userId, claims: {}, settings: null, cursor: null, settingsCursor: null, lastSync: null };
+    if (!m || m.userId !== userId) m = { userId, claims: {}, settings: null, cursor: null, settingsCursor: null, lastSync: null, snapshotDay: null };
     return m;
   };
   const saveMeta = () => { try { localStorage.setItem(META_KEY, JSON.stringify(meta)); } catch { } };
+  const getOwner = () => {
+    try {
+      const o = JSON.parse(localStorage.getItem(OWNER_KEY));
+      if (o && o.id) return o;
+      const m = JSON.parse(localStorage.getItem(META_KEY));   // devices that synced before owners were tracked
+      if (m && m.userId) return { id: m.userId, email: '' };
+    } catch { }
+    return null;
+  };
+  const setOwner = u => { try { u ? localStorage.setItem(OWNER_KEY, JSON.stringify({ id: u.id, email: u.email || '' })) : localStorage.removeItem(OWNER_KEY); } catch { } };
+  const pendingChanges = () => !!meta && (state.claims.some(c => meta.claims[c.id] !== claimHash(c)) ||
+    Object.keys(meta.claims).some(id => meta.claims[id] !== 'deleted' && !state.claims.some(c => c.id === id)) ||
+    meta.settings !== settingsHash());
+
+  // Removes every claim and setting from this device (the cloud copy is untouched).
+  async function wipeDevice() {
+    const d = normalizeState(null);
+    state.claims = []; state.lastPlan = null;
+    Object.keys(state.settings).forEach(k => delete state.settings[k]);
+    Object.assign(state.settings, d.settings);
+    try { localStorage.removeItem(META_KEY); } catch { }
+    await baseClear();
+    setOwner(null);
+    applying = true;
+    try { persistLocal(); renderAll(); try { renderSettings(); initPlannerControls(); } catch (e) { console.error(e); } }
+    finally { applying = false; }
+  }
 
   let sb = null, user = null, channel = null;
-  let busy = false, again = false, pushTimer = null, applying = false, lastError = '';
+  let busy = false, again = false, pushTimer = null, applying = false, lastError = '', snapNote = '';
 
   // ---------- UI ----------
   const panelHtml = `
@@ -2848,13 +2935,30 @@ window.TRACKER_CONFIG = {
       <div class="row" style="margin-top:10px">
         <button class="btn primary" id="csIn">Sign in</button>
         <button class="btn" id="csUp">Create account</button>
+        <button class="btn" id="csForgot">Forgot password?</button>
       </div>
     </div>
     <div id="csInBox">
       <div class="row"><span id="csWho"></span></div>
       <div class="row">
         <button class="btn primary" id="csNow">Sync now</button>
+        <button class="btn" id="csPw">Change password</button>
         <button class="btn" id="csOutBtn">Sign out</button>
+      </div>
+      <details id="csRecover" style="margin-top:6px">
+        <summary class="small" style="cursor:pointer">Recover deleted claims or an earlier version</summary>
+        <div class="row" style="margin-top:8px">
+          <button class="btn small" id="csDeleted">Recently deleted claims</button>
+          <button class="btn small" id="csSnaps">Daily cloud backups</button>
+        </div>
+        <div id="csRecList" class="small"></div>
+      </details>
+    </div>
+    <div id="csPwBox" style="display:none;margin-top:8px">
+      <label class="f">New password (at least 6 characters) <input id="csNewPass" type="password" autocomplete="new-password" minlength="6"></label>
+      <div class="row" style="margin-top:8px">
+        <button class="btn primary" id="csPwSave">Save new password</button>
+        <button class="btn" id="csPwCancel">Cancel</button>
       </div>
     </div>
     <div class="muted small" id="csNote"></div>`;
@@ -2874,6 +2978,7 @@ window.TRACKER_CONFIG = {
     }
     $('#csIntro').textContent = 'Sign in to keep your claims in sync on all your devices (computer, phone, tablet). Use the same email and password on each one.';
     const creds = () => ({ email: $('#csEmail').value.trim(), password: $('#csPass').value });
+    const returnTo = () => location.protocol.startsWith('http') ? location.origin + location.pathname : undefined;
     $('#csIn').addEventListener('click', async () => {
       const { email, password } = creds();
       if (!email || !password) return note('Enter your email and password.');
@@ -2885,19 +2990,42 @@ window.TRACKER_CONFIG = {
       const { email, password } = creds();
       if (!email || password.length < 6) return note('Enter your email and a password of at least 6 characters.');
       note('Creating your account…');
-      const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.protocol.startsWith('http') ? location.href.split('#')[0] : undefined } });
+      const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: returnTo() } });
       if (error) return note('Couldn\'t create the account: ' + error.message);
       if (!data.session) note('Account created. Check your email and click the confirmation link, then sign in here.');
     });
+    $('#csForgot').addEventListener('click', async () => {
+      const email = $('#csEmail').value.trim();
+      if (!email) return note('Enter your email above, then tap Forgot password? again.');
+      note('Sending a reset link…');
+      const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: returnTo() });
+      note(error ? 'Couldn\'t send the reset link: ' + error.message
+        : 'Check your email for a reset link and open it on this device. The tracker will then ask for your new password.');
+    });
     $('#csPass').addEventListener('keydown', e => { if (e.key === 'Enter') $('#csIn').click(); });
     $('#csNow').addEventListener('click', () => syncNow(true));
-    $('#csOutBtn').addEventListener('click', async () => {
-      if (!confirm('Sign out of cloud sync on this device? Your claims stay on this device, they just stop syncing until you sign in again.')) return;
-      await sb.auth.signOut();
+    $('#csPw').addEventListener('click', () => showPwBox(true));
+    $('#csPwCancel').addEventListener('click', () => showPwBox(false));
+    $('#csPwSave').addEventListener('click', async () => {
+      const password = $('#csNewPass').value;
+      if (password.length < 6) return note('The new password needs at least 6 characters.');
+      const { error } = await sb.auth.updateUser({ password });
+      if (error) return note('Couldn\'t change the password: ' + error.message);
+      $('#csNewPass').value = ''; showPwBox(false);
+      note('Password changed. Use the new one on your other devices next time they ask.');
+      toast('Password changed.');
     });
+    $('#csOutBtn').addEventListener('click', signOutFlow);
+    $('#csDeleted').addEventListener('click', showDeleted);
+    $('#csSnaps').addEventListener('click', showSnapshots);
+    $('#csRecList').addEventListener('click', onRecoverClick);
   }
   const note = t => { const n = $('#csNote'); if (n) n.textContent = t; };
   const when = iso => iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'never';
+  function showPwBox(on) {
+    $('#csPwBox').style.display = on ? '' : 'none';
+    if (on) { $('#csNewPass').focus(); }
+  }
 
   function renderUi() {
     if (!enabled || !$('#cloudPanel')) return;
@@ -2909,9 +3037,72 @@ window.TRACKER_CONFIG = {
       const status = !navigator.onLine ? 'Offline: changes will sync when you\'re back online'
         : lastError ? 'Sync problem: ' + lastError
         : busy ? 'Syncing…'
-        : 'Synced to cloud · ' + when(meta && meta.lastSync);
+        : 'Synced to cloud · ' + when(meta && meta.lastSync) + (snapNote ? ' · ' + snapNote : '');
       note(status);
       if (sn) sn.textContent = !navigator.onLine ? 'Saved on this device · offline' : lastError ? 'Saved on this device · sync problem' : 'Synced · ' + when(meta && meta.lastSync);
+    }
+  }
+
+  // ---------- sign out ----------
+  async function signOutFlow() {
+    if (!confirm('Sign out of cloud sync on this device?')) return;
+    let wipe = false;
+    if (state.claims.length) {
+      await syncNow(false);
+      const unsynced = pendingChanges();
+      if (unsynced) {
+        if (!confirm('Some changes on this device haven\'t reached the cloud yet (you may be offline). If you sign out now they stay on this device only. Sign out anyway?')) return;
+      } else {
+        wipe = confirm('Also remove your claims from this device?\n\nOK = remove them (recommended on a shared or borrowed device; they stay safe in your account).\nCancel = keep them on this device.');
+      }
+    }
+    await sb.auth.signOut();
+    if (wipe) { await wipeDevice(); toast('Signed out and removed your claims from this device.'); }
+    else toast('Signed out.');
+  }
+
+  // ---------- recovery ----------
+  async function showDeleted() {
+    const box = $('#csRecList'); box.textContent = 'Loading…';
+    const since = new Date(Date.now() - KEEP_DAYS * 864e5).toISOString();
+    const { data, error } = await sb.from('claims').select('id,data,updated_at').eq('deleted', true).gt('updated_at', since).not('data', 'is', null).order('updated_at', { ascending: false }).limit(500);
+    if (error) { box.textContent = 'Couldn\'t load deleted claims: ' + error.message; return; }
+    const rows = data.filter(r => !state.claims.some(c => c.id === r.id));
+    recoverCache = rows;
+    if (!rows.length) { box.textContent = 'No claims deleted in the last ' + KEEP_DAYS + ' days.'; return; }
+    box.innerHTML = `<div class="row" style="margin:8px 0"><b>${rows.length} deleted in the last ${KEEP_DAYS} days</b><button class="btn small" data-restore-all>Restore all</button></div>` +
+      rows.map(r => `<div class="row" style="margin:4px 0;justify-content:space-between"><span>${esc(r.data.insured || r.data.claimNo || 'Claim')}${r.data.claimNo ? ' · ' + esc(r.data.claimNo) : ''} <span class="muted">· deleted ${when(r.updated_at)}</span></span><button class="btn small" data-restore="${esc(r.id)}">Restore</button></div>`).join('');
+  }
+  let recoverCache = [];
+  async function showSnapshots() {
+    const box = $('#csRecList'); box.textContent = 'Loading…';
+    const { data, error } = await sb.from('snapshots').select('day,created_at,claim_count').order('day', { ascending: false }).limit(KEEP_DAYS + 5);
+    if (error) { box.textContent = 'Daily cloud backups aren\'t set up yet: run supabase/2-backups.sql in Supabase (see README). (' + error.message + ')'; return; }
+    if (!data.length) { box.textContent = 'No daily backups yet. The first one is made on the next sync.'; return; }
+    box.innerHTML = '<p class="muted" style="margin:8px 0">Restoring replaces the claims on all your devices with that day\'s copy. Claims added since then are moved to Recently deleted, so nothing is lost.</p>' +
+      data.map(r => `<div class="row" style="margin:4px 0;justify-content:space-between"><span>${new Date(r.day + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })} <span class="muted">· ${r.claim_count ?? '?'} claims · saved ${when(r.created_at)}</span></span><button class="btn small" data-snap="${esc(r.day)}">Restore</button></div>`).join('');
+  }
+  async function onRecoverClick(e) {
+    const t = e.target.closest('button'); if (!t) return;
+    if (t.dataset.restore !== undefined || t.dataset.restoreAll !== undefined) {
+      const rows = t.dataset.restore !== undefined ? recoverCache.filter(r => r.id === t.dataset.restore) : recoverCache;
+      for (const r of rows) if (!state.claims.some(c => c.id === r.id)) state.claims.push(normalizeClaim(copy(r.data)));
+      recoverCache = recoverCache.filter(r => !rows.includes(r));
+      save(); renderAll();
+      toast(rows.length === 1 ? 'Claim restored.' : rows.length + ' claims restored.');
+      showDeleted();
+    } else if (t.dataset.snap) {
+      const day = t.dataset.snap;
+      if (!confirm('Restore all claims and settings to the cloud backup from ' + day + '? This changes every device you\'re signed in on.')) return;
+      const { data, error } = await sb.from('snapshots').select('data').eq('day', day).single();
+      if (error) { toast('Couldn\'t load that backup: ' + esc(error.message), 6000); return; }
+      const n = normalizeState(copy(data.data));
+      state.claims = n.claims; state.lastPlan = n.lastPlan;
+      Object.keys(state.settings).forEach(k => delete state.settings[k]);
+      Object.assign(state.settings, n.settings);
+      save(); renderAll(); try { renderSettings(); initPlannerControls(); } catch (err) { console.error(err); }
+      toast('Restored the backup from ' + day + '.');
+      $('#csRecList').textContent = '';
     }
   }
 
@@ -2923,10 +3114,21 @@ window.TRACKER_CONFIG = {
     for (const c of state.claims) {
       live.add(c.id);
       const h = claimHash(c);
-      if (meta.claims[c.id] !== h) rows.push({ row: { id: c.id, data: c, deleted: false, updated_at: now }, h });
+      if (meta.claims[c.id] !== h) rows.push({ row: { id: c.id, data: copy(c), deleted: false, updated_at: now }, h });
     }
     for (const id of Object.keys(meta.claims)) {
-      if (!live.has(id) && meta.claims[id] !== 'deleted') rows.push({ row: { id, data: null, deleted: true, updated_at: now }, h: 'deleted' });
+      if (!live.has(id) && meta.claims[id] !== 'deleted') {
+        // Keep the last known copy so it can be restored for 30 days.
+        const last = await baseGet('c:' + id);
+        rows.push({ row: { id, data: last || null, deleted: true, updated_at: now }, h: 'deleted' });
+      }
+    }
+    // If another device changed one of these claims since we last pulled, pull and merge first.
+    const known = rows.filter(r => meta.claims[r.row.id] !== undefined).map(r => r.row.id);
+    for (let i = 0; i < known.length && meta.cursor; i += 200) {
+      const { data, error } = await sb.from('claims').select('id,server_at').in('id', known.slice(i, i + 200)).gt('server_at', meta.cursor);
+      if (error) throw error;
+      if (data.length) { again = true; return 0; }
     }
     for (let i = 0; i < rows.length; i += 200) {
       const chunk = rows.slice(i, i + 200);
@@ -2934,19 +3136,26 @@ window.TRACKER_CONFIG = {
       if (error) throw error;
       chunk.forEach(r => { meta.claims[r.row.id] = r.h; });
       saveMeta();
+      await basePut(chunk.map(r => ['c:' + r.row.id, r.row.deleted ? r.row.data || undefined : r.row.data]));
     }
     const sh = settingsHash();
     if (meta.settings !== sh) {
       const { error } = await sb.from('tracker_settings').upsert({ settings: state.settings, last_plan: state.lastPlan, updated_at: now }, { onConflict: 'user_id' });
       if (error) throw error;
       meta.settings = sh; saveMeta();
+      await basePut([['settings', copy([state.settings, state.lastPlan])]]);
     }
     return rows.length;
   }
 
   // ---------- pull: bring in changes from other devices ----------
+  function replaceClaim(local, data) {
+    if (local) { Object.keys(local).forEach(k => delete local[k]); Object.assign(local, data); return local; }
+    state.claims.push(data); return data;
+  }
   async function pull() {
     let changed = false, settingsChanged = false;
+    const bases = [];
     // Re-read the last minute each time so a change that committed a moment late is never missed;
     // rows that match what's already here are skipped.
     let since = meta.cursor ? new Date(Date.parse(meta.cursor) - 60000).toISOString() : null;
@@ -2957,25 +3166,37 @@ window.TRACKER_CONFIG = {
       if (error) throw error;
       for (const r of data) {
         const local = state.claims.find(c => c.id === r.id);
+        const known = meta.claims[r.id];
         // On a device's first sync (no record for this claim yet) the cloud copy wins, so an old copy of the
         // tracker on another computer can't overwrite newer work.
-        const known = meta.claims[r.id];
         const localDirty = known === undefined ? false : local ? known !== claimHash(local) : known !== 'deleted';
-        // A change made on this device that hasn't been sent yet wins; it goes up on the next push.
+        const remote = !r.deleted && r.data ? normalizeClaim(copy(r.data)) : null;
         if (!localDirty) {
-          if (r.deleted ? !local && meta.claims[r.id] === 'deleted' : r.data && meta.claims[r.id] === claimHash(normalizeClaim(r.data))) {
+          if (r.deleted ? !local && known === 'deleted' : remote && known === claimHash(remote)) {
             // Already up to date (often our own change coming back).
           } else if (r.deleted) {
             if (local) { state.claims = state.claims.filter(c => c.id !== r.id); changed = true; }
             meta.claims[r.id] = 'deleted';
-          } else if (r.data) {
-            const c = normalizeClaim(r.data);
-            if (local) Object.keys(local).forEach(k => delete local[k]);
-            if (local) Object.assign(local, c); else state.claims.push(c);
-            meta.claims[r.id] = claimHash(local || c);
+            bases.push(['c:' + r.id, r.data || undefined]);
+          } else if (remote) {
+            replaceClaim(local, remote);
+            meta.claims[r.id] = claimHash(remote);
+            bases.push(['c:' + r.id, copy(remote)]);
             changed = true;
           }
+        } else if (local && remote) {
+          // Changed here and on another device: merge the two.
+          const base = await baseGet('c:' + r.id);
+          if (base) {
+            const merged = normalizeClaim(merge3(base, copy(local), remote));
+            replaceClaim(local, merged);
+            meta.claims[r.id] = claimHash(remote);   // still differs from the merged copy, so it gets pushed
+            bases.push(['c:' + r.id, copy(remote)]);
+            changed = true;
+          }
+          // No saved copy to compare with (first sync after updating): this device's version is kept.
         }
+        // Otherwise: deleted here (the deletion goes up next) or deleted elsewhere but edited here (the edit wins).
         if (!meta.cursor || Date.parse(r.server_at) > Date.parse(meta.cursor)) meta.cursor = r.server_at;
         since = r.server_at;
       }
@@ -2985,22 +3206,31 @@ window.TRACKER_CONFIG = {
     {
       const { data, error } = await sb.from('tracker_settings').select('settings,last_plan,server_at').maybeSingle();
       if (error) throw error;
-      if (data && data.server_at !== meta.settingsCursor) {
+      if (data && data.server_at !== meta.settingsCursor && data.settings) {
+        const remote = [normalizeSettings(copy(data.settings)), data.last_plan ?? null];
+        const localNow = copy([state.settings, state.lastPlan]);
         const localDirty = meta.settings !== null && meta.settings !== settingsHash();
-        const same = data.settings && hash(JSON.stringify([normalizeSettings(data.settings), data.last_plan ?? null])) === settingsHash();
-        if (same) meta.settings = settingsHash();
-        else if (!localDirty && data.settings) {
-          const s = normalizeSettings(data.settings);
+        let next = null;
+        if (same(remote, localNow)) meta.settings = settingsHash();
+        else if (!localDirty) next = remote;
+        else {
+          const base = await baseGet('settings');
+          if (base) next = merge3(base, localNow, remote);
+        }
+        if (next) {
+          const s = normalizeSettings(next[0]);
           Object.keys(state.settings).forEach(k => delete state.settings[k]);
           Object.assign(state.settings, s);
-          state.lastPlan = data.last_plan ?? null;
-          meta.settings = settingsHash();
+          state.lastPlan = next[1] ?? null;
+          meta.settings = hash(JSON.stringify(remote));
           settingsChanged = true;
         }
+        bases.push(['settings', remote]);
         meta.settingsCursor = data.server_at;
         saveMeta();
       }
     }
+    await basePut(bases);
     if (changed || settingsChanged) {
       applying = true;
       try {
@@ -3012,19 +3242,42 @@ window.TRACKER_CONFIG = {
     return changed || settingsChanged;
   }
 
+  // Devices that synced before merging existed have no saved copies yet: save them for every claim that's in step with the cloud.
+  async function seedBases() {
+    const entries = state.claims.filter(c => meta.claims[c.id] === claimHash(c)).map(c => ['c:' + c.id, copy(c)]);
+    if (meta.settings === settingsHash()) entries.push(['settings', copy([state.settings, state.lastPlan])]);
+    await basePut(entries);
+    meta.basesSeeded = true; saveMeta();
+  }
+
+  // ---------- daily cloud backup ----------
+  async function dailySnapshot() {
+    const today = dayISO();
+    if (meta.snapshotDay === today) return;
+    const data = { claims: state.claims, settings: state.settings, lastPlan: state.lastPlan, exported: new Date().toISOString(), app: 'claim-tracker v2' };
+    const { error } = await sb.from('snapshots').upsert({ day: today, data, claim_count: state.claims.length }, { onConflict: 'user_id,day' });
+    if (error) { snapNote = 'daily cloud backup off (see README)'; console.warn('Daily backup failed', error); return; }
+    snapNote = '';
+    meta.snapshotDay = today; saveMeta();
+    await sb.from('snapshots').delete().lt('day', dayISO(new Date(Date.now() - KEEP_DAYS * 864e5)));
+  }
+
   async function syncNow(manual) {
     if (!user || !meta) return;
     if (busy) { again = true; return; }
     if (!navigator.onLine) { renderUi(); return; }
     busy = true; renderUi();
     try {
+      let rounds = 0;
       do {
         again = false;
         await pull();
+        if (!meta.basesSeeded) await seedBases();
         await push();
-      } while (again);
+      } while (again && ++rounds < 5);
       lastError = '';
       meta.lastSync = new Date().toISOString(); saveMeta();
+      try { await dailySnapshot(); } catch (e) { console.warn(e); }
       if (manual) toast('Synced with the cloud.');
     } catch (e) {
       lastError = (e && e.message) || String(e);
@@ -3047,11 +3300,42 @@ window.TRACKER_CONFIG = {
       .subscribe();
   }
 
-  async function onAuth(session) {
+  // Makes sure the claims on this device belong to the account signing in. Returns false to cancel sign-in.
+  async function claimDevice(u) {
+    const owner = getOwner();
+    const n = state.claims.length;
+    if (owner && owner.id === u.id) return true;
+    if (owner && owner.id !== u.id) {
+      if (n && !confirm(`This device has ${n} claim${n === 1 ? '' : 's'} from another account${owner.email ? ' (' + owner.email + ')' : ''}.\n\nOK = remove them from this device and load ${u.email}'s claims. (They stay safe in the other account.)\nCancel = don't sign in.`)) return false;
+      await wipeDevice();
+    } else if (n) {
+      if (!confirm(`Add the ${n} claim${n === 1 ? '' : 's'} on this device to ${u.email}'s account?\n\nOK = add them.\nCancel = don't sign in (nothing changes on this device).`)) return false;
+    }
+    setOwner(u);
+    return true;
+  }
+
+  let authChain = Promise.resolve();
+  function onAuth(event, session) {
+    authChain = authChain.then(() => handleAuth(event, session)).catch(e => console.error(e));
+  }
+  async function handleAuth(event, session) {
+    if (event === 'PASSWORD_RECOVERY') {
+      try { showTab('settings'); } catch { }
+      showPwBox(true);
+      note('Choose a new password and tap Save new password.');
+    }
     const next = session ? session.user : null;
     if ((next && next.id) === (user && user.id)) { renderUi(); return; }
-    user = next;
     if (channel) { sb.removeChannel(channel); channel = null; }
+    if (next && !(await claimDevice(next))) {
+      user = null; meta = null;
+      await sb.auth.signOut();
+      note('Not signed in. The claims on this device were left as they were.');
+      renderUi();
+      return;
+    }
+    user = next;
     if (!user) {
       meta = null; lastError = '';
       const sn = $('#saveNote'); if (sn) sn.textContent = 'Saved on this device · not syncing';
@@ -3062,7 +3346,7 @@ window.TRACKER_CONFIG = {
     renderUi();
     listen();
     await syncNow(false);
-    if (!lastError) note('Synced to cloud · ' + when(meta.lastSync));
+    if (!lastError) renderUi();
   }
 
   mountUi();
@@ -3071,12 +3355,12 @@ window.TRACKER_CONFIG = {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'adjusterClaimTracker.auth' }
   });
   afterSave.push(schedulePush);
-  sb.auth.onAuthStateChange((_evt, session) => { setTimeout(() => onAuth(session), 0); });
+  sb.auth.onAuthStateChange((evt, session) => { setTimeout(() => onAuth(evt, session), 0); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNow(false); });
   window.addEventListener('online', () => syncNow(false));
   window.addEventListener('offline', renderUi);
   setInterval(() => { if (document.visibilityState === 'visible') syncNow(false); }, 120000);
-  window.cloudSync = { syncNow: () => syncNow(true) };
+  window.cloudSync = { syncNow: () => syncNow(true), merge3 };
 })();
 </script>
 <script>
