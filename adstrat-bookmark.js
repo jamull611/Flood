@@ -1,9 +1,10 @@
 // AdStrat bookmark for the Adjuster Claim Tracker.
 // The phone/computer bookmark is a short loader that runs this file on your AdStrat claims page.
 // It reads every page of your claims list (read-only) and offers "Copy for tracker".
-// GENERATED from adjuster-claim-tracker.html (adstratParse + adstratGrabber) by tools/build-bookmark.py.
-// Don't edit by hand: change those functions in the tracker and re-run the script.
+// GENERATED from adjuster-claim-tracker.html (adstratParse + adstratGrabber) by tools/build-bookmark.js.
+// Don't edit by hand: change those functions in the tracker and re-run the build.
 (function () {
+try {
 function adstratParse(root) {
   const rows = [...root.querySelectorAll('tr')].filter(tr => /Claim Type:/.test(tr.textContent) && /Received:/.test(tr.textContent));
   return rows.filter(r => !rows.some(o => o !== r && r.contains(o))).map(r => {
@@ -78,4 +79,5 @@ function adstratGrabber(parse) {
   })().catch(e => say('<b>Claim Tracker</b><br>Couldn\'t read AdStrat: ' + e.message + '<br>Make sure you\'re signed in.'));
 }
 adstratGrabber(adstratParse);
+} catch (e) { alert('Claim Tracker error: ' + e.message); }
 })();

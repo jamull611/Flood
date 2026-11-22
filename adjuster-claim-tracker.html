@@ -588,7 +588,7 @@ h4 { margin: 16px 0 8px; font-size: 14px; display: flex; align-items: center; ga
           <div class="phone-only" id="asPhone">
             <p class="muted small" style="margin-top:0">On your phone, a bookmark copies your claims list from AdStrat, then <b>⟳ Sync from AdStrat</b> on the Claims tab brings them in. Set the bookmark up once:</p>
             <button class="btn primary" id="asCopyCode" type="button" style="width:100%;margin-bottom:6px">📋 Copy bookmark code</button>
-            <p class="muted small" style="margin:0 0 10px">It's short and always runs the latest version. If tapping the bookmark says it couldn't load, use the full code instead: <a href="https://jamull611.github.io/Flood/bookmark.html" target="_blank" rel="noopener">open the full-code page</a> (or <a href="#" id="asCopyFull">copy it here</a>).</p>
+            <p class="muted small" style="margin:0 0 10px">It's short and always runs the latest version. If tapping the bookmark says it couldn't load, open <a href="https://jamull611.github.io/Flood/bookmark.html" target="_blank" rel="noopener">the full-code page</a> in Chrome and use that code instead. It also has a tiny test bookmark if nothing happens at all.</p>
             <details class="small" style="margin-bottom:8px"><summary style="cursor:pointer;font-weight:600">iPhone (Safari)</summary>
               <ol style="padding-left:18px;margin:6px 0 0">
                 <li>Tap <b>Copy bookmark code</b> above.</li>
@@ -1412,7 +1412,7 @@ function wireAdstrat() {
     catch (e) { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
   };
   $('#asCopyCode').addEventListener('click', async () => { await copyText(loaderCode); toast('Bookmark code copied. Now paste it as the bookmark\'s address (steps below).', 5000); });
-  $('#asCopyFull').addEventListener('click', async e => { e.preventDefault(); await copyText(bookmarkCode); toast('Full bookmark code copied. Paste it as the bookmark\'s address.', 5000); });
+
   $('#asBookmarklet').addEventListener('click', e => { e.preventDefault(); alert('Drag this button onto your bookmarks bar (Ctrl+Shift+B shows the bar). Then click the bookmark while you\'re on your AdStrat claims list.'); });
   if (location.protocol === 'file:') {
     const dir = decodeURIComponent(location.pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/[^/]*$/, '').replace(/\//g, '\\');

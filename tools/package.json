@@ -1,0 +1,7 @@
+{
+  "name": "claim-tracker-tools",
+  "private": true,
+  "description": "Build helpers for the Adjuster Claim Tracker",
+  "scripts": { "build-bookmark": "node build-bookmark.js" },
+  "devDependencies": { "terser": "5.31.6" }
+}
