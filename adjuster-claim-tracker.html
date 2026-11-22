@@ -1158,8 +1158,11 @@ function adstratGrabber(parse) {
   const wins = [];
   const walk = w => { wins.push(w); try { for (let i = 0; i < w.frames.length; i++) walk(w.frames[i]); } catch (e) { } };
   walk(window);
+  // The claims list may be its own page (Dclaims.asp) or shown at /claimsystem/: find it by its contents.
+  const hasClaims = w => { try { return [...w.document.querySelectorAll('tr')].some(tr => /Claim Type:/.test(tr.textContent) && /Received:/.test(tr.textContent)); } catch (e) { return false; } };
   let W = null;
   for (const w of wins) { try { if (/dclaims\.asp/i.test(w.location.pathname)) { W = w; break; } } catch (e) { } }
+  if (!W) W = wins.find(hasClaims) || null;
   // The message box must go in a real page body; the outer page of a frameset has none that shows.
   let host = null;
   for (const w of (W ? [W].concat(wins) : wins)) { try { const b = w.document.body; if (b && b.tagName === 'BODY') { host = b; break; } } catch (e) { } }
