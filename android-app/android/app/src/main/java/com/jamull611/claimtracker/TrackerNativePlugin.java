@@ -2,11 +2,15 @@ package com.jamull611.claimtracker;
 
 import android.Manifest;
 import android.content.ActivityNotFoundException;
+import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.provider.Settings;
+import android.util.Base64;
 
 import androidx.core.content.ContextCompat;
 
@@ -21,6 +25,10 @@ import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 
 import org.json.JSONArray;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 
 /**
  * What the tracker page can ask the phone to do when it runs inside the Android app:
@@ -154,6 +162,37 @@ public class TrackerNativePlugin extends Plugin {
         try { getContext().startActivity(nav); call.resolve(); return; } catch (ActivityNotFoundException ignored) { }
         Intent any = new Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=" + Uri.encode(address.isEmpty() ? q : address))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try { getContext().startActivity(any); call.resolve(); } catch (ActivityNotFoundException e) { call.reject("No maps app found", "maps"); }
+    }
+
+    // Saves a file the tracker made (photo zip, photo report PDF) to Downloads/Claim Tracker.
+    @PluginMethod
+    public void saveFile(PluginCall call) {
+        String name = call.getString("name", "file").replaceAll("[\\\\/:*?\"<>|]", " ").trim();
+        String mime = call.getString("mime", "application/octet-stream");
+        String data = call.getString("data", "");
+        getBridge().execute(() -> {
+            try {
+                byte[] bytes = Base64.decode(data, Base64.DEFAULT);
+                String where;
+                if (Build.VERSION.SDK_INT >= 29) {
+                    ContentValues v = new ContentValues();
+                    v.put(MediaStore.Downloads.DISPLAY_NAME, name);
+                    v.put(MediaStore.Downloads.MIME_TYPE, mime);
+                    v.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Claim Tracker");
+                    Uri uri = getContext().getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                    if (uri == null) throw new Exception("Couldn't create the file");
+                    try (OutputStream out = getContext().getContentResolver().openOutputStream(uri)) { out.write(bytes); }
+                    where = "Downloads/Claim Tracker";
+                } else {
+                    File dir = new File(getContext().getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "Claim Tracker");
+                    if (!dir.exists() && !dir.mkdirs()) throw new Exception("Couldn't create the folder");
+                    try (FileOutputStream out = new FileOutputStream(new File(dir, name))) { out.write(bytes); }
+                    where = dir.getAbsolutePath();
+                }
+                JSObject r = new JSObject(); r.put("where", where + "/" + name);
+                call.resolve(r);
+            } catch (Exception e) { call.reject(e.getMessage(), "save"); }
+        });
     }
 
     @PluginMethod

@@ -118,3 +118,25 @@ Tracker and install again; your claims come back from cloud sync.
 publishes it at the link above. The native code is in `android-app/android/app/src/main/java/`.
 It's installed from a file rather than the Play Store because Google Play doesn't allow apps to send texts
 on their own.
+
+## Photo labeling
+On a claim, open **Report → Photos**:
+1. **＋ Add photos**: pick the inspection photos from your phone.
+2. **✨ Label with AI**: Claude (claude-opus-5-5) labels each photo with its report section, room and a
+   caption, and the photos are sorted into report order: front/risk, address, exterior elevations,
+   high-water marks, interior room by room (overview first), mechanical, contents, documents.
+3. Check the captions, fix anything, and move photos with ↑ ↓ if needed.
+4. **⬇ Photos (.zip)**: the original full-size photos renamed in order (`001 Front elevation.jpg`, …) plus
+   `captions.csv`. Good for importing into Xactimate. **📄 Photo report (PDF)**: two photos per page with
+   captions and a header (insured, claim #, address, event, date of loss).
+
+Only the labels are saved on the claim (and synced). The photos stay on your phone, so add the same photos
+again later and their captions come back without being labeled again. Settings → **Photo captions** lets you
+describe your caption style. Cost: about 1¢ per photo (photos are shrunk to 1280 px before sending).
+Photos are sent to Anthropic's API to be labeled; check that your firm and carriers allow that.
+
+**Setup, once (Supabase):**
+1. Get an API key at console.anthropic.com (API Keys → Create Key).
+2. Supabase → **Edge Functions → Secrets**: add `ANTHROPIC_API_KEY` with that key.
+3. Supabase → **Edge Functions → Deploy a new function → Via Editor**: name it `photo-labels`, paste all of
+   `supabase/functions/photo-labels/index.ts`, and click **Deploy**. Leave **Verify JWT on**.

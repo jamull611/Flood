@@ -107,6 +107,12 @@ Everything runs on your computer. Nothing is uploaded anywhere.
     then Send. (Needs the one-time Supabase setup in README.md; check it with
     Settings > On my way reminders > Send a test reminder.)
 
+  PHOTOS
+    On a claim's Report tab, tap Photos > Add photos and pick the inspection
+    photos. "Label with AI" captions each one and sorts them into report order.
+    Fix any caption, then download the renamed photos (.zip, for Xactimate) or a
+    photo report PDF. (One-time setup in README.md.)
+
   APPOINTMENTS
     Buttons on each booked claim: Confirmed, No-show, Reschedule, Inspected.
     No-show and Reschedule put the claim back on your follow-up list.
