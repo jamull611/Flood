@@ -87,3 +87,34 @@ The reminder comes from Supabase, so it arrives even while Google Maps is on scr
 
 Without this setup, or if notifications are blocked, the reminder only works while the app stays open.
 Drive times don't account for live traffic.
+
+## Android app
+The Android app is the tracker plus things a web page can't do:
+- **On my way texts itself.** Tap 🚗 On my way: Google Maps starts, the app follows your drive, and when
+  you're about 20 minutes away it texts the insured from your own number. A notification gives you 10
+  seconds to **Cancel** (or **Send now**) first, and the text is logged on the claim.
+- **Text sends directly.** The Text button's **Send text** sends from your number and logs it. No Messages
+  app, no "I sent it".
+
+It loads the same tracker from the website, so tracker changes still arrive on their own. Your claims,
+cloud sync and settings are the same as in the browser (sign in to cloud sync once in the app).
+
+**Install (Android):**
+1. On the phone, open https://github.com/jamull611/Flood/releases/download/android-latest/claim-tracker.apk
+2. Open the downloaded file and tap **Install**. The first time, Android asks you to allow installing apps
+   from your browser: allow it, go back, and tap Install again. If Play Protect warns about an unknown app,
+   tap **More details → Install anyway** (it's your own app, not from the Play Store).
+3. Open **Claim Tracker**, sign in under **Settings → Cloud sync**, and try **Settings → On my way →
+   Send a test text to my own number**. Allow texting when asked.
+
+The first time you tap On my way, allow **Location** ("While using the app"), **Texting** and
+**Notifications**. Location is only used between tapping On my way and the text going out.
+
+**Updates:** the tracker updates by itself. When the app shell changes, install the new file from the same
+link over the old one. If Android ever says the app "conflicts with an existing package", uninstall Claim
+Tracker and install again; your claims come back from cloud sync.
+
+**Building:** `.github/workflows/android.yml` builds the app on GitHub whenever `android-app/` changes and
+publishes it at the link above. The native code is in `android-app/android/app/src/main/java/`.
+It's installed from a file rather than the Play Store because Google Play doesn't allow apps to send texts
+on their own.
