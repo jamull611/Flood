@@ -1153,14 +1153,21 @@ function adstratParse(root) {
 // reads every page of the claim list, and copies it to the clipboard for the tracker. Read-only.
 function adstratGrabber(parse) {
   const MARK = 'ADSTRAT-CLAIMS v1';
-  const wins = [window];
-  for (let i = 0; i < window.frames.length; i++) wins.push(window.frames[i]);
+  // AdStrat is built from frames (sometimes frames inside frames): look through all of them.
+  const wins = [];
+  const walk = w => { wins.push(w); try { for (let i = 0; i < w.frames.length; i++) walk(w.frames[i]); } catch (e) { } };
+  walk(window);
   let W = null;
   for (const w of wins) { try { if (/dclaims\.asp/i.test(w.location.pathname)) { W = w; break; } } catch (e) { } }
-  const host = document.body || (W && W.document.body);
+  // The message box must go in a real page body; the outer page of a frameset has none that shows.
+  let host = null;
+  for (const w of (W ? [W].concat(wins) : wins)) { try { const b = w.document.body; if (b && b.tagName === 'BODY') { host = b; break; } } catch (e) { } }
+  const plain = html => html.replace(/<br>/g, '\n').replace(/<[^>]+>/g, '');
   const say = html => {
-    let box = document.getElementById('trkSync');
-    if (!box) { box = document.createElement('div'); box.id = 'trkSync'; box.style.cssText = 'position:fixed;top:16px;right:16px;z-index:2147483647;background:#fff;color:#222;border:2px solid #0078d4;border-radius:12px;padding:14px 16px;font:14px Segoe UI,Arial,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.3);max-width:340px;line-height:1.4'; host.appendChild(box); }
+    if (!host) { alert(plain(html)); return null; }
+    const doc = host.ownerDocument;
+    let box = doc.getElementById('trkSync');
+    if (!box) { box = doc.createElement('div'); box.id = 'trkSync'; box.style.cssText = 'position:fixed;top:16px;left:16px;right:16px;margin:0 auto;z-index:2147483647;background:#fff;color:#222;border:2px solid #0078d4;border-radius:12px;padding:16px 18px;font:16px Segoe UI,Arial,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.3);max-width:420px;line-height:1.45'; host.appendChild(box); }
     box.innerHTML = html + '<div style="text-align:right;margin-top:8px"><a href="#" id="trkClose" style="color:#666;font-size:12px">Close</a></div>';
     box.querySelector('#trkClose').onclick = e => { e.preventDefault(); box.remove(); };
     return box;
@@ -1182,10 +1189,11 @@ function adstratGrabber(parse) {
     }
     const seen = new Set(), list = claims.filter(c => c.id && !seen.has(c.id) && seen.add(c.id));
     const payload = MARK + '\n' + JSON.stringify({ pulled: new Date().toISOString(), claims: list });
-    const box = say(`<b>Claim Tracker</b><br>Found <b>${list.length}</b> claims (${list.filter(c => !c.closed).length} open).<br><button id="trkCopy" style="margin-top:10px;padding:8px 14px;background:#0078d4;color:#fff;border:0;border-radius:8px;font:inherit;cursor:pointer">Copy for tracker</button>`);
+    const box = say(`<b>Claim Tracker</b><br>Found <b>${list.length}</b> claims (${list.filter(c => !c.closed).length} open).<br><button id="trkCopy" style="margin-top:12px;width:100%;padding:12px 16px;background:#0078d4;color:#fff;border:0;border-radius:8px;font:inherit;cursor:pointer">Copy for tracker</button>`);
+    if (!box) return;
     box.querySelector('#trkCopy').onclick = async () => {
-      try { await navigator.clipboard.writeText(payload); }
-      catch (e) { const t = document.createElement('textarea'); t.value = payload; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
+      try { await (host.ownerDocument.defaultView || window).navigator.clipboard.writeText(payload); }
+      catch (e) { const d = host.ownerDocument, t = d.createElement('textarea'); t.value = payload; host.appendChild(t); t.select(); d.execCommand('copy'); t.remove(); }
       say(`<b>Claim Tracker</b><br>✓ Copied ${list.length} claims.<br>Now open your tracker and click <b>⟳ Sync from AdStrat</b>.`);
     };
   })().catch(e => say('<b>Claim Tracker</b><br>Couldn\'t read AdStrat: ' + e.message + '<br>Make sure you\'re signed in.'));
