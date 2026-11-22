@@ -587,7 +587,8 @@ h4 { margin: 16px 0 8px; font-size: 14px; display: flex; align-items: center; ga
         <div id="extOff">
           <div class="phone-only" id="asPhone">
             <p class="muted small" style="margin-top:0">On your phone, a bookmark copies your claims list from AdStrat, then <b>⟳ Sync from AdStrat</b> on the Claims tab brings them in. Set the bookmark up once:</p>
-            <button class="btn primary" id="asCopyCode" type="button" style="width:100%;margin-bottom:10px">📋 Copy bookmark code</button>
+            <button class="btn primary" id="asCopyCode" type="button" style="width:100%;margin-bottom:6px">📋 Copy bookmark code</button>
+            <p class="muted small" style="margin:0 0 10px">It's short and always runs the latest version. If tapping the bookmark says it couldn't load, <a href="#" id="asCopyFull">copy the full code</a> instead and use that as the address.</p>
             <details class="small" style="margin-bottom:8px"><summary style="cursor:pointer;font-weight:600">iPhone (Safari)</summary>
               <ol style="padding-left:18px;margin:6px 0 0">
                 <li>Tap <b>Copy bookmark code</b> above.</li>
@@ -1293,6 +1294,7 @@ function runAdstratImport(text) {
   return syncSummary(r);
 }
 const hasExt = () => document.documentElement.hasAttribute('data-adstrat-ext');
+const BOOKMARK_JS = 'https://jamull611.github.io/Flood/adstrat-bookmark.js';
 // Phones can't always read the clipboard directly; this box takes a manual paste instead.
 function showPasteBox() {
   const note = $('#syncNote');
@@ -1397,12 +1399,17 @@ function wireAdstrat() {
     $('#syncNote').innerHTML = 'Nothing from AdStrat on the clipboard. On AdStrat, click your <b>Copy AdStrat claims</b> bookmark → <b>Copy for tracker</b>, then click Sync again. (Setup is under Settings.)';
   });
   const bookmarkCode = 'javascript:' + encodeURIComponent('(' + adstratGrabber.toString() + ')(' + adstratParse.toString() + ')');
+  // The short bookmark loads the latest code from the website each time, so fixes arrive without re-pasting.
+  const loaderCode = 'javascript:' + encodeURIComponent("(function(){var d=document,s=d.createElement('script');s.src='" + BOOKMARK_JS + "?t='+Date.now();" +
+    "s.onerror=function(){alert('Claim Tracker: the AdStrat bookmark could not load. Check your internet connection, or use the full bookmark code (tracker Settings > AdStrat sync).')};" +
+    "(d.head||d.documentElement).appendChild(s)})()");
   $('#asBookmarklet').href = bookmarkCode;
-  $('#asCopyCode').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(bookmarkCode); }
-    catch (e) { const t = document.createElement('textarea'); t.value = bookmarkCode; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
-    toast('Bookmark code copied. Now paste it as the bookmark\'s address (steps below).', 5000);
-  });
+  const copyText = async text => {
+    try { await navigator.clipboard.writeText(text); }
+    catch (e) { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
+  };
+  $('#asCopyCode').addEventListener('click', async () => { await copyText(loaderCode); toast('Bookmark code copied. Now paste it as the bookmark\'s address (steps below).', 5000); });
+  $('#asCopyFull').addEventListener('click', async e => { e.preventDefault(); await copyText(bookmarkCode); toast('Full bookmark code copied. Paste it as the bookmark\'s address.', 5000); });
   $('#asBookmarklet').addEventListener('click', e => { e.preventDefault(); alert('Drag this button onto your bookmarks bar (Ctrl+Shift+B shows the bar). Then click the bookmark while you\'re on your AdStrat claims list.'); });
   if (location.protocol === 'file:') {
     const dir = decodeURIComponent(location.pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/[^/]*$/, '').replace(/\//g, '\\');
