@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Claim Tracker</string>
+    <string name="title_activity_main">Claim Tracker</string>
+    <string name="package_name">com.jamull611.claimtracker</string>
+    <string name="custom_url_scheme">com.jamull611.claimtracker</string>
+</resources>

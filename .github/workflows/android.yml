@@ -1,0 +1,74 @@
+# Builds the Android app and publishes it as a download:
+#   https://github.com/jamull611/Flood/releases/download/android-latest/claim-tracker.apk
+# Runs when anything in android-app/ changes, or by hand (Actions > Android app > Run workflow).
+name: Android app
+
+on:
+  push:
+    branches: [main]
+    paths: ['android-app/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to publish the download
+
+concurrency:
+  group: android-app
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: android-app/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # Android only installs an update over the old app if it's signed with the same key,
+      # so the key is kept between builds. (If the key is ever lost, uninstall the old app
+      # once and install the new one; your claims come back from cloud sync.)
+      - name: Restore signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: claim-tracker-signing-key-v1
+
+      - name: Create signing key (first build only)
+        run: |
+          if [ ! -f ~/.android/debug.keystore ]; then
+            mkdir -p ~/.android
+            keytool -genkeypair -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey \
+              -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Claim Tracker,O=Claim Tracker,C=US"
+          fi
+
+      - name: Install and prepare the app
+        working-directory: android-app
+        run: |
+          npm ci
+          npx cap sync android
+
+      - name: Build the app file
+        working-directory: android-app/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug -PversionCode=${{ github.run_number }} --no-daemon --stacktrace
+
+      - name: Publish the download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android-app/android/app/build/outputs/apk/debug/app-debug.apk claim-tracker.apk
+          gh release delete android-latest --yes --cleanup-tag || true
+          gh release create android-latest claim-tracker.apk \
+            --title "Claim Tracker for Android (build ${{ github.run_number }})" \
+            --notes "Install on your Android phone: open this page on the phone, tap claim-tracker.apk, then Install. Built from ${{ github.sha }}." \
+            --latest=false

@@ -1,0 +1,13 @@
+{
+  "name": "claim-tracker-android",
+  "private": true,
+  "description": "Android app for the Adjuster Claim Tracker: loads the hosted tracker and adds texting and trip tracking",
+  "scripts": { "sync": "cap sync android" },
+  "dependencies": {
+    "@capacitor/android": "8.5.0",
+    "@capacitor/core": "8.5.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.0"
+  }
+}

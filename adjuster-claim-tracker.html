@@ -3508,6 +3508,10 @@ window.TRACKER_CONFIG = {
   const cfg = window.TRACKER_CONFIG || {};
   const fnUrl = cfg.supabaseUrl ? cfg.supabaseUrl.replace(/\/+$/, '') + '/functions/v1/reminders' : '';
   const dlg = $('#omwDlg'), box = $('#omwBody');
+  // Inside the Android app the phone can send texts and track the drive itself.
+  const CAP = window.Capacitor;
+  const NATIVE = !!(CAP && CAP.isNativePlatform && CAP.isNativePlatform() && CAP.getPlatform && CAP.getPlatform() === 'android' && CAP.nativePromise);
+  const N = (method, opts = {}) => CAP.nativePromise('TrackerNative', method, opts);
   const clock = d => new Date(d).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const navHref = a => 'https://www.google.com/maps/dir/?api=1&travelmode=driving&dir_action=navigate&destination=' + encodeURIComponent(a);
 
@@ -3622,6 +3626,7 @@ window.TRACKER_CONFIG = {
     const p = pending[id]; if (!p) return;
     clearTimeout(timers[id]); delete pending[id]; savePending();
     if (p.rid) { const sb = cloud(); if (sb) sb.from('reminders').update({ cancelled: true }).eq('id', p.rid).then(() => { }, () => { }); }
+    if (p.native && NATIVE) N('stopTrip').catch(() => { });
     refresh();
     if (!silent) toast('Reminder cancelled.');
   }
@@ -3639,6 +3644,7 @@ window.TRACKER_CONFIG = {
 
   function badge(id) {
     const p = pending[id]; if (!p) return '';
+    if (p.native) return ` · <span class="omw-badge">🚗 On my way: texting at ${LEAD_MIN} min out</span> <a href="#" data-omw-cancel="${esc(id)}" class="small">cancel</a>`;
     return ` · <span class="omw-badge">🔔 text at ${clock(p.fireAt)} (arrive ~${clock(p.eta)})</span> <a href="#" data-omw-cancel="${esc(id)}" class="small">cancel</a>`;
   }
 
@@ -3651,9 +3657,50 @@ window.TRACKER_CONFIG = {
     if (pending[c.id]) a.push(`<button type="button" class="btn" data-omw-cancel="${esc(c.id)}">Cancel reminder</button>`);
     return `<div class="omw-actions">${a.join('')}</div>`;
   }
+  async function startNative(c) {
+    const phone = textPhone(c);
+    if (!phone) { toast('Add a phone number to this claim first.'); return; }
+    toast('🚗 Starting…');
+    if (!(await ensureGeo(c))) { toast('Couldn\'t find this claim\'s address on the map. Check the address and try again.', 6000); return; }
+    save();
+    const message = fillTemplate(S().templates.onway, c, { minutes: '{minutes}' });
+    try {
+      await N('startTrip', { claimId: c.id, insured: c.insured || 'the insured', phone, message, lat: c.lat, lng: c.lng, leadMin: LEAD_MIN, delaySec: 10 });
+    } catch (e) {
+      const what = e && e.code === 'location' ? 'location' : e && e.code === 'sms' ? 'texting' : '';
+      $('#omwWho').textContent = c.insured || '';
+      show(what ? `<p>On my way needs <b>${what}</b> permission to work. Allow it for Claim Tracker in your phone's settings, then try again.</p><div class="omw-actions"><button type="button" class="btn primary" data-omw-settings>Open app settings</button></div>`
+        : `<p class="stale-warn">${esc((e && e.message) || 'Couldn\'t start the trip.')}</p>`);
+      if (!dlg.open) dlg.showModal();
+      return;
+    }
+    pending[c.id] = { native: true, started: new Date().toISOString() }; savePending(); refresh();
+    toast(`🚗 On my way. I'll text ${esc(c.insured || 'them')} when you're about ${LEAD_MIN} minutes out (10-second warning to cancel).`, 6000);
+    N('openNavigation', { lat: c.lat, lng: c.lng, address: c.address }).catch(() => { window.open(navHref(c.address), '_blank'); });
+  }
+  // Texts the app sent on its own get logged on the claim.
+  async function collectNative() {
+    if (!NATIVE) return;
+    try {
+      const trip = await N('getTrip');
+      for (const [id, p] of Object.entries(pending)) if (p.native && !(trip.active && trip.claimId === id)) delete pending[id];
+      savePending();
+      const { texts = [] } = await N('takeSentTexts');
+      let logged = 0;
+      for (const t of texts) {
+        const c = claimById(t.claimId); if (!c) continue;
+        if (t.ok) { addContact(c, { method: 'text', outcome: 'text_sent', note: 'On my way (sent automatically): ' + t.body }); logged++; }
+        else { toast(`Couldn't text ${esc(c.insured)}: ${esc(t.error || 'unknown error')}. Send it yourself.`, 8000); openText(c.id, 'onway', { minutes: String(LEAD_MIN) }); }
+      }
+      if (logged) { save(); try { refreshViews(); } catch { } toast(`✓ ${logged === 1 ? 'Your On my way text was sent' : logged + ' On my way texts were sent'} and logged.`); }
+      refresh();
+    } catch (e) { console.warn(e); }
+  }
+
   async function start(id) {
     const c = claimById(id); if (!c) return;
     if (!c.address) { toast('Add an address to this claim first.'); return; }
+    if (NATIVE) return startNative(c);
     // Ask for notifications right away: phones only allow the prompt straight after a tap.
     const perm = 'Notification' in window && Notification.permission === 'default' ? Notification.requestPermission().catch(() => 'default') : Promise.resolve();
     $('#omwWho').textContent = c.insured + (c.address ? ' · ' + street(c.address) : '');
@@ -3685,6 +3732,7 @@ window.TRACKER_CONFIG = {
     if (cx) { e.preventDefault(); e.stopPropagation(); cancel(cx.dataset.omwCancel); if (dlg.open) dlg.close(); return; }
     if (tx) { e.preventDefault(); dlg.close(); openText(tx.dataset.omwText, 'onway', { minutes: tx.dataset.min }); return; }
     if (e.target.closest('[data-omw-close]')) dlg.close();
+    if (e.target.closest('[data-omw-settings]')) { dlg.close(); if (NATIVE) N('openAppSettings').catch(() => { }); }
     if (e.target.closest('[data-omw-nav]')) setTimeout(() => dlg.close(), 300);
   }, true);
 
@@ -3723,7 +3771,39 @@ window.TRACKER_CONFIG = {
     });
   })();
 
-  window.omw = { start, cancel, badge, openTwenty, pending: () => ({ ...pending }) };
+  if (NATIVE) {
+    const btn = $('#textSms');
+    btn.textContent = '💬 Send text';
+    if (btn.nextElementSibling) btn.nextElementSibling.textContent = 'Sends from your phone number and logs it on the claim.';
+    btn.addEventListener('click', async e => {
+      e.preventDefault(); e.stopPropagation();
+      const to = $('#textTo').value.trim(), body = $('#textBody').value.trim();
+      if (!to || !body) { toast('Add a number and a message first.'); return; }
+      if (textState.tpl === 'offer' && !textState.slots.length) { toast('No times picked yet.'); return; }
+      btn.classList.add('disabled');
+      try { await N('sendSms', { to, body }); logText(); textDlg.close(); toast('✓ Text sent and logged.'); }
+      catch (err) { toast('Couldn\'t send: ' + esc((err && err.message) || 'unknown error'), 6000); }
+      finally { btn.classList.remove('disabled'); }
+    }, true);
+    const panel = $('#omwPanel');
+    if (panel) {
+      panel.querySelector('p').innerHTML = `Tap <b>🚗 On my way</b> on today's inspections. Google Maps starts, and when you're about ${LEAD_MIN} minutes away the app texts the insured from your number on its own. You get a 10-second warning with <b>Cancel</b> first, and the text is logged on the claim.`;
+      const t = $('#omwTest'), note = $('#omwTestNote');
+      const fresh = t.cloneNode(true); t.replaceWith(fresh);
+      fresh.textContent = '📱 Send a test text to my own number';
+      fresh.addEventListener('click', async () => {
+        const me = S().me.phone;
+        if (!me) { note.textContent = 'Add your cell under "You (for text messages)" first.'; return; }
+        note.textContent = 'Sending…';
+        try { await N('sendSms', { to: me, body: 'Claim Tracker test: texting from this app works.' }); note.textContent = '✓ Sent. Check your messages.'; }
+        catch (err) { note.textContent = 'Couldn\'t send: ' + ((err && err.message) || 'unknown error'); }
+      });
+    }
+    collectNative();
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') collectNative(); });
+  }
+
+  window.omw = { start, cancel, badge, openTwenty, pending: () => ({ ...pending }), native: NATIVE };
   refresh();
 })();
 </script>
