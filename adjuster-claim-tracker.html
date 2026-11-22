@@ -3667,7 +3667,8 @@ window.TRACKER_CONFIG = {
     try {
       await N('startTrip', { claimId: c.id, insured: c.insured || 'the insured', phone, message, lat: c.lat, lng: c.lng, leadMin: LEAD_MIN, delaySec: 10 });
     } catch (e) {
-      const what = e && e.code === 'location' ? 'location' : e && e.code === 'sms' ? 'texting' : '';
+      if (isSmsBlocked(e)) { showSmsHelp(); return; }
+      const what = e && e.code === 'location' ? 'location' : '';
       $('#omwWho').textContent = c.insured || '';
       show(what ? `<p>On my way needs <b>${what}</b> permission to work. Allow it for Claim Tracker in your phone's settings, then try again.</p><div class="omw-actions"><button type="button" class="btn primary" data-omw-settings>Open app settings</button></div>`
         : `<p class="stale-warn">${esc((e && e.message) || 'Couldn\'t start the trip.')}</p>`);
@@ -3678,6 +3679,22 @@ window.TRACKER_CONFIG = {
     toast(`🚗 On my way. I'll text ${esc(c.insured || 'them')} when you're about ${LEAD_MIN} minutes out (10-second warning to cancel).`, 6000);
     N('openNavigation', { lat: c.lat, lng: c.lng, address: c.address }).catch(() => { window.open(navHref(c.address), '_blank'); });
   }
+  // Android blocks texting for apps installed from a file until "Allow restricted settings" is turned on.
+  const smsHelp = `<p><b>Android is blocking texting for Claim Tracker.</b> Apps installed from a file (not the Play Store) need one extra step:</p>
+    <ol style="padding-left:20px;margin:6px 0">
+      <li>Tap <b>Open app settings</b> below.</li>
+      <li>Tap the <b>⋮</b> menu (top-right) → <b>Allow restricted settings</b>, and confirm.</li>
+      <li>Tap <b>Permissions → SMS → Allow</b>.</li>
+      <li>Come back and try again.</li>
+    </ol>
+    <div class="omw-actions"><button type="button" class="btn primary" data-omw-settings>Open app settings</button></div>`;
+  const isSmsBlocked = e => !!e && (e.code === 'denied' || e.code === 'sms' || /texting permission/i.test(e.message || ''));
+  function showSmsHelp() {
+    $('#omwWho').textContent = 'Texting permission';
+    show(smsHelp);
+    if (!dlg.open) dlg.showModal();
+  }
+
   // Texts the app sent on its own get logged on the claim.
   async function collectNative() {
     if (!NATIVE) return;
@@ -3690,6 +3707,7 @@ window.TRACKER_CONFIG = {
       for (const t of texts) {
         const c = claimById(t.claimId); if (!c) continue;
         if (t.ok) { addContact(c, { method: 'text', outcome: 'text_sent', note: 'On my way (sent automatically): ' + t.body }); logged++; }
+        else if (/permission/i.test(t.error || '')) showSmsHelp();
         else { toast(`Couldn't text ${esc(c.insured)}: ${esc(t.error || 'unknown error')}. Send it yourself.`, 8000); openText(c.id, 'onway', { minutes: String(LEAD_MIN) }); }
       }
       if (logged) { save(); try { refreshViews(); } catch { } toast(`✓ ${logged === 1 ? 'Your On my way text was sent' : logged + ' On my way texts were sent'} and logged.`); }
@@ -3782,7 +3800,7 @@ window.TRACKER_CONFIG = {
       if (textState.tpl === 'offer' && !textState.slots.length) { toast('No times picked yet.'); return; }
       btn.classList.add('disabled');
       try { await N('sendSms', { to, body }); logText(); textDlg.close(); toast('✓ Text sent and logged.'); }
-      catch (err) { toast('Couldn\'t send: ' + esc((err && err.message) || 'unknown error'), 6000); }
+      catch (err) { if (isSmsBlocked(err)) { textDlg.close(); showSmsHelp(); } else toast('Couldn\'t send: ' + esc((err && err.message) || 'unknown error'), 6000); }
       finally { btn.classList.remove('disabled'); }
     }, true);
     const panel = $('#omwPanel');
@@ -3796,7 +3814,7 @@ window.TRACKER_CONFIG = {
         if (!me) { note.textContent = 'Add your cell under "You (for text messages)" first.'; return; }
         note.textContent = 'Sending…';
         try { await N('sendSms', { to: me, body: 'Claim Tracker test: texting from this app works.' }); note.textContent = '✓ Sent. Check your messages.'; }
-        catch (err) { note.textContent = 'Couldn\'t send: ' + ((err && err.message) || 'unknown error'); }
+        catch (err) { if (isSmsBlocked(err)) { note.textContent = 'Texting is blocked by Android. Follow the steps shown, then try again.'; showSmsHelp(); } else note.textContent = 'Couldn\'t send: ' + ((err && err.message) || 'unknown error'); }
       });
     }
     collectNative();
