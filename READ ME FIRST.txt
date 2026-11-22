@@ -100,6 +100,13 @@ Everything runs on your computer. Nothing is uploaded anywhere.
     reply "1", "2" or "3", open the claim and click "Book 1/2/3".
     Then use "Send confirmation" to text them the confirmed time.
 
+  ON MY WAY
+    On today's inspections, tap "On my way". The tracker works out your drive
+    time and starts Google Maps. About 20 minutes before you arrive, your phone
+    buzzes; tap the notification and the text is ready - tap Open in Messages,
+    then Send. (Needs the one-time Supabase setup in README.md; check it with
+    Settings > On my way reminders > Send a test reminder.)
+
   APPOINTMENTS
     Buttons on each booked claim: Confirmed, No-show, Reschedule, Inspected.
     No-show and Reschedule put the claim back on your follow-up list.

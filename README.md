@@ -23,7 +23,9 @@ across devices through Supabase.
 4. **Authentication → URL Configuration**: set **Site URL** to the address where the app is hosted (step 2),
    and add `https://jamull611.github.io/Flood/**` under **Redirect URLs**, so confirmation and
    password-reset emails come back to the app.
-5. While it's being tried out: **Authentication → Sign In / Providers → turn off "Allow new users to sign up"**,
+5. **On my way reminders** (optional): deploy the `reminders` Edge Function and run
+   `supabase/3-reminders.sql`. See *On my way reminders* below.
+6. While it's being tried out: **Authentication → Sign In / Providers → turn off "Allow new users to sign up"**,
    and add people under **Authentication → Users → Add user**.
 
 ### 2. Host the app
@@ -66,3 +68,22 @@ password on the others.
   **Settings → AdStrat sync → Sync automatically every 30 minutes** and new AdStrat claims reach
   your phone on their own while Chrome is open on the computer (6 AM–9 PM). Your AdStrat password is
   never stored; the extension uses your normal AdStrat sign-in in Chrome.
+
+## On my way reminders
+Tap **🚗 On my way** on one of today's inspections. The tracker gets your location, works out the drive
+time (road directions plus 10%), and starts Google Maps. About 20 minutes before you arrive, your phone
+gets a notification. Tap it and the "On my way" text opens with the number filled in. Tap **Open in
+Messages**, then **Send**. If you're already within 20 minutes, it offers to send the text right away.
+
+The reminder comes from Supabase, so it arrives even while Google Maps is on screen. Setup, once:
+1. **Edge Function:** Supabase → **Edge Functions → Deploy a new function → Via Editor**. Name it
+   `reminders`, replace the sample code with all of `supabase/functions/reminders/index.ts`, and click
+   **Deploy**. Then open the function's **Details** and turn **off** "Verify JWT" (it takes no input and
+   only sends reminders that are already due).
+2. **SQL:** run `supabase/3-reminders.sql` in the SQL Editor. It adds the tables and a job that checks
+   for due reminders every minute.
+3. **Check:** in the app, **Settings → On my way reminders → Send a test reminder**. Your phone should
+   buzz within about a minute. (iPhone: the tracker must be added to the Home Screen.)
+
+Without this setup, or if notifications are blocked, the reminder only works while the app stays open.
+Drive times don't account for live traffic.

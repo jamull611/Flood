@@ -261,6 +261,11 @@ h4 { margin: 16px 0 8px; font-size: 14px; display: flex; align-items: center; ga
 .outcomes .btn.active { background: var(--cp-accent); color: #fff; border-color: var(--cp-accent); }
 .slot { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--cp-border); border-radius: 10px; margin-top: 6px; }
 .slot > span { flex: 1; }
+.omw-big { font-size: 17px; margin: 4px 0 10px; }
+.omw-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.omw-actions .btn { padding: 11px 14px; font-size: 15px; }
+.omw-badge { color: var(--cp-accent); }
+#textSms.disabled { opacity: .5; pointer-events: none; }
 .qr-wrap { display: flex; gap: 14px; align-items: center; padding: 10px; border: 1px solid var(--cp-border); border-radius: 12px; }
 #textQR { flex: none; width: 168px; height: 168px; background: #fff; border-radius: 8px; padding: 4px; display: flex; align-items: center; justify-content: center; }
 #textQR svg { width: 100%; height: 100%; }
@@ -760,7 +765,9 @@ h4 { margin: 16px 0 8px; font-size: 14px; display: flex; align-items: center; ga
     <div class="seg wrap" id="tplPick"></div>
     <label class="f">Message <textarea id="textBody" rows="7"></textarea></label>
     <label class="f">Send to <input id="textTo" type="tel"></label>
-    <div class="qr-wrap">
+    <a class="btn primary big phone-only" id="textSms" href="#">💬 Open in Messages</a>
+    <div class="muted small phone-only" style="margin-top:-4px">Messages opens with the number and text filled in. Tap Send there, then come back and tap <b>I sent it</b>.</div>
+    <div class="qr-wrap desktop-only">
       <div id="textQR"></div>
       <div class="small"><b>Send it from your phone:</b> point your phone's camera at this code and tap the link. Messages opens with the number and text filled in. Or click <b>Copy</b> and paste it into a text.</div>
     </div>
@@ -772,6 +779,12 @@ h4 { margin: 16px 0 8px; font-size: 14px; display: flex; align-items: center; ga
     <button type="button" class="btn" data-close>Cancel</button>
     <button type="button" class="btn primary" id="textSent">✓ I sent it</button>
   </div>
+</dialog>
+
+<!-- ON MY WAY -->
+<dialog id="omwDlg" class="sheet small-sheet">
+  <div class="dlg-head"><div class="dlg-title"><div>🚗 On my way</div><div class="muted small" id="omwWho"></div></div><button type="button" class="btn icon" data-omw-close aria-label="Close">✕</button></div>
+  <div class="dlg-pane" id="omwBody"></div>
 </dialog>
 
 <div id="toast" role="status" aria-live="polite"></div>
@@ -815,7 +828,7 @@ const TEMPLATE_NAMES = { offer: 'Offer 3 times', confirm: 'Confirm appointment',
 const DEFAULT_TEMPLATES = {
   offer: "Hi {first}, this is {myName}, the flood adjuster assigned to your claim. I'd like to schedule your property inspection. Would one of these times work?\n{options}\nJust reply 1, 2 or 3, or tell me a time that works better.",
   confirm: "Hi {first}, this is {myName}, your flood adjuster. Confirming your inspection on {apptDay} at {apptTime} at {street}. Please reply to confirm, or let me know if you need a different time.",
-  onway: "Hi {first}, this is {myName}, your flood adjuster. I'm on my way to {street} and should be there in about 20 minutes.",
+  onway: "Hi {first}, this is {myName}, your flood adjuster. I'm on my way to {street} and should be there in about {minutes} minutes.",
   intro: "Hi {first}, this is {myName}, the flood adjuster assigned to your claim. I tried to reach you to set up your inspection. Please call or text me back at {myPhone}."
 };
 const OUTCOMES = {
@@ -924,6 +937,8 @@ function normalizeSettings(s) {
   const D = defaults().settings;
   s = Object.assign({}, D, s || {});
   for (const k of ['pay', 'plan', 'offer', 'contact', 'me', 'templates', 'lodging']) s[k] = Object.assign({}, D[k], s[k] || {});
+  // The original On my way wording said "about 20 minutes"; use the drive-time version unless it was edited.
+  if (s.templates.onway === "Hi {first}, this is {myName}, your flood adjuster. I'm on my way to {street} and should be there in about 20 minutes.") s.templates.onway = DEFAULT_TEMPLATES.onway;
   if (!Array.isArray(s.plan.blocked)) s.plan.blocked = [];
   if (!Array.isArray(s.steps) || !s.steps.length) s.steps = clone(DEFAULT_STEPS);
   if (!Array.isArray(s.events)) s.events = [];
@@ -1107,7 +1122,7 @@ function fillTemplate(tpl, c, extra = {}) {
   const vars = {
     first: firstName(c.insured), insured: c.insured || '', claimNo: c.claimNo || '', address: c.address || '', street: street(c.address),
     apptDay: c.inspectDate ? dayLong(c.inspectDate) : '[date]', apptTime: c.inspectTime ? fmtClock(hm(c.inspectTime)) : '[time]',
-    myName: me.name || 'your adjuster', myPhone: fmtPhone(me.phone) || 'this number', options: '', ...extra
+    myName: me.name || 'your adjuster', myPhone: fmtPhone(me.phone) || 'this number', options: '', minutes: '20', ...extra
   };
   return String(tpl || '').replace(/\{(\w+)\}/g, (m, k) => k in vars ? vars[k] : m);
 }
@@ -2037,6 +2052,7 @@ function toastAction(msg, label, fn, ms = 6000) {
 }
 function quickAction(kind, id) {
   const c = claimById(id); if (!c) return;
+  if (kind === 'inspected' && window.omw) window.omw.cancel(id, true);
   if (kind === 'inspected') withUndo(c, `${esc(c.insured)} marked Inspected.`, () => { advanceStatus(c, 'Inspected'); if (!c.inspectDate) c.inspectDate = todayISO(); c.appt = ''; c.nextAt = null; c.lastUpdate = todayISO(); });
   if (kind === 'confirmed') withUndo(c, 'Marked confirmed.', () => addContact(c, { method: 'text', outcome: 'confirmed' }));
   if (kind === 'noshow') withUndo(c, 'Marked as a no-show. It\'s back on your follow-up list.', () => addContact(c, { method: 'person', outcome: 'no_show' }));
@@ -2076,7 +2092,8 @@ function renderToday() {
   const meta = c => [c.event, c.claimNo].filter(Boolean).map(esc).join(' · ');
   const section = (id, title, list, render, note = '') => list.length ? `<section class="list-sec" id="${id}"><h3>${title} <span class="count">${list.length}</span></h3>${note}<div class="panel list">${list.map(render).join('')}</div></section>` : '';
   let html = '';
-  html += section('secToday', "Today's inspections", todays, c => item(c, `<b>${c.inspectTime ? fmtClock(hm(c.inspectTime)) : 'Time not set'}</b> ${apptBadge(c)} · ${meta(c)}`,
+  html += section('secToday', "Today's inspections", todays, c => item(c, `<b>${c.inspectTime ? fmtClock(hm(c.inspectTime)) : 'Time not set'}</b> ${apptBadge(c)} · ${meta(c)}${window.omw ? window.omw.badge(c.id) : ''}`,
+    (c.address ? `<button type="button" class="btn small act primary" data-omw="${c.id}" title="On my way: get a reminder to text them when you're 20 minutes out">🚗<span> On my way</span></button>` : '') +
     actionBtns(c, { tpl: 'onway', map: true, log: false }) + quick('✓ Inspected', 'data-q="inspected" data-id', c.id)));
   html += section('secDue', 'Follow-ups due', due, c => item(c, `${fuText(c.fu)}${c.fu.tries >= 5 ? ' <span class="pill bad">Hard to reach</span>' : ''} · ${meta(c)}`,
     actionBtns(c, { tpl: c.fu.tries >= 1 ? 'intro' : 'offer', offer: c.fu.tries < 1 ? false : true }) + quick('Snooze', 'data-q="snooze" data-id', c.id)),
@@ -2463,11 +2480,11 @@ $('#logForm').addEventListener('submit', e => {
 // ---------- text messages (incl. offer 3 times) ----------
 const textDlg = $('#textDlg');
 let textState = null;
-function openText(id, tpl) {
+function openText(id, tpl, extra = {}) {
   const c = claimById(id); if (!c) return;
   tpl = tpl || (c.inspectDate && UNINSPECTED.includes(c.status) ? 'confirm' : unansweredCount(c) ? 'intro' : 'offer');
   if (tpl === 'offer' && !c.address) tpl = 'intro';
-  textState = { id, tpl, slots: [], alts: [], seq: 0 };
+  textState = { id, tpl, slots: [], alts: [], seq: 0, extra };
   $('#textWho').textContent = c.insured;
   $('#textTo').value = textPhone(c);
   $('#tplPick').innerHTML = Object.keys(TEMPLATE_NAMES).map(k => `<button type="button" data-tpl-pick="${k}">${esc(TEMPLATE_NAMES[k])}</button>`).join('') + '<button type="button" data-tpl-pick="blank">Blank</button>';
@@ -2484,7 +2501,7 @@ function pickTemplate(k) {
 }
 function fillTextBody() {
   const c = claimById(textState.id), k = textState.tpl;
-  $('#textBody').value = k === 'blank' ? '' : fillTemplate(S().templates[k], c, { options: optionsText(textState.slots) });
+  $('#textBody').value = k === 'blank' ? '' : fillTemplate(S().templates[k], c, { ...(textState.extra || {}), options: optionsText(textState.slots) });
   updateSendLink();
 }
 async function loadOffer() {
@@ -2520,7 +2537,12 @@ $('#offerBox').addEventListener('click', e => {
 $('#tplPick').addEventListener('click', e => { const b = e.target.closest('[data-tpl-pick]'); if (b) pickTemplate(b.dataset.tplPick); });
 // The QR code holds the number and message; scanning it with a phone camera opens Messages ready to send.
 let qrTimer = null;
-function updateSendLink() { clearTimeout(qrTimer); qrTimer = setTimeout(renderQR, 150); }
+function updateSendLink() {
+  clearTimeout(qrTimer); qrTimer = setTimeout(renderQR, 150);
+  const to = $('#textTo').value.trim(), body = $('#textBody').value.trim(), a = $('#textSms');
+  a.href = to ? smsHref(to, body) : '#';
+  a.classList.toggle('disabled', !to || !body);
+}
 function renderQR() {
   const box = $('#textQR'), to = phoneDigits($('#textTo').value), body = $('#textBody').value.trim();
   if (!to || !body) { box.innerHTML = `<div class="qr-empty">${!to ? 'Add a phone number' : 'Write a message'} to get a scan code.</div>`; return; }
@@ -2541,6 +2563,7 @@ function logText() {
     c.offer = { at: new Date().toISOString(), slots: textState.slots.map(s => ({ date: s.date, time: s.time })) };
     addContact(c, { method: 'text', outcome: 'offered', note: textState.slots.map((s, i) => `${i + 1}) ${slotLabel(s)}`).join('  ') });
   } else addContact(c, { method: 'text', outcome: k === 'confirm' ? 'confirm_sent' : 'text_sent', note: k === 'blank' ? '' : TEMPLATE_NAMES[k] });
+  if (k === 'onway' && window.omw) window.omw.cancel(c.id, true);
   if (textPhone(c) !== $('#textTo').value.trim() && $('#textTo').value.trim()) { if (!c.cell) c.cell = fmtPhone($('#textTo').value); }
   save(); refreshViews();
   toastAction('✓ Logged as texted.', 'Undo', () => { const i = state.claims.findIndex(x => x.id === c.id); if (i >= 0) { state.claims[i] = JSON.parse(before); save(); refreshViews(); } }, 8000);
@@ -3470,7 +3493,238 @@ window.TRACKER_CONFIG = {
   window.addEventListener('online', () => syncNow(false));
   window.addEventListener('offline', renderUi);
   setInterval(() => { if (document.visibilityState === 'visible') syncNow(false); }, 120000);
-  window.cloudSync = { syncNow: () => syncNow(true), merge3, whenReady, flush };
+  window.cloudSync = { syncNow: () => syncNow(true), merge3, whenReady, flush, client: () => sb, user: () => user };
+})();
+</script>
+<script>
+// ===== onmyway.js =====
+// "On my way": works out the drive time from where you are, starts Google Maps, and reminds you to text
+// the insured when you're about 20 minutes out. The reminder comes from Supabase as a phone notification
+// (so it arrives while you're in Google Maps); without that, it only works while this app stays open.
+'use strict';
+(() => {
+  const OMW_KEY = 'adjusterClaimTracker.omw', VAPID_KEY = 'adjusterClaimTracker.vapid';
+  const LEAD_MIN = 20;
+  const cfg = window.TRACKER_CONFIG || {};
+  const fnUrl = cfg.supabaseUrl ? cfg.supabaseUrl.replace(/\/+$/, '') + '/functions/v1/reminders' : '';
+  const dlg = $('#omwDlg'), box = $('#omwBody');
+  const clock = d => new Date(d).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const navHref = a => 'https://www.google.com/maps/dir/?api=1&travelmode=driving&dir_action=navigate&destination=' + encodeURIComponent(a);
+
+  // Reminders waiting on this device: { claimId: { fireAt, eta, min, rid?, local? } }
+  let pending = {};
+  try { pending = JSON.parse(localStorage.getItem(OMW_KEY)) || {}; } catch { }
+  const savePending = () => { try { localStorage.setItem(OMW_KEY, JSON.stringify(pending)); } catch { } };
+  for (const [id, p] of Object.entries(pending)) if (Date.parse(p.eta) < Date.now() - 3600e3) delete pending[id];
+  savePending();
+  const timers = {};
+
+  const show = html => { box.innerHTML = html; };
+  const cloud = () => {
+    const cs = window.cloudSync;
+    const sb = cs && cs.client && cs.client(), user = cs && cs.user && cs.user();
+    return sb && user ? sb : null;
+  };
+
+  function here() {
+    return new Promise((res, rej) => {
+      if (!navigator.geolocation) return rej(new Error('This device can\'t share its location.'));
+      navigator.geolocation.getCurrentPosition(
+        p => res({ lat: p.coords.latitude, lng: p.coords.longitude }),
+        e => rej(new Error(e.code === 1 ? 'Location is turned off for this app. Allow location access in your phone\'s settings and try again.' : 'Couldn\'t get your location. Try again in a moment.')),
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+    });
+  }
+  // Road drive time (plus 10% for real-world traffic); straight-line estimate if routing is unavailable.
+  async function driveMinutes(from, to) {
+    try {
+      const r = await fetch(`https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=false`);
+      const j = await r.json();
+      if (j.code === 'Ok' && j.routes && j.routes[0]) return { min: j.routes[0].duration / 60 * 1.1, real: true };
+    } catch { }
+    return { min: haversineKm(from, to) * 1.3 / 72 * 60, real: false };
+  }
+
+  // ---------- push notifications ----------
+  const b64ToBytes = b64 => { const s = atob((b64 + '='.repeat((4 - b64.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(s, c => c.charCodeAt(0)); };
+  async function pushReady() {
+    const sb = cloud();
+    if (!sb) return { why: 'signin' };
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window) || !location.protocol.startsWith('http'))
+      return { why: isIOS() && !navigator.standalone ? 'ios-install' : 'unsupported' };
+    if (Notification.permission !== 'granted') return { why: 'denied' };
+    try {
+      // Don't wait forever if the offline helper isn't running (fall back to the in-app reminder).
+      const reg = await Promise.race([navigator.serviceWorker.ready, new Promise(r => setTimeout(() => r(null), 8000))]);
+      if (!reg) return { why: 'unsupported' };
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        let key = null;
+        try { key = localStorage.getItem(VAPID_KEY); } catch { }
+        if (!key) {
+          const r = await fetch(fnUrl);
+          if (!r.ok) return { why: 'server' };
+          key = (await r.json()).publicKey;
+          try { localStorage.setItem(VAPID_KEY, key); } catch { }
+        }
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+      }
+      const j = sub.toJSON();
+      const { error } = await sb.from('push_subscriptions').upsert({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth }, { onConflict: 'user_id,endpoint' });
+      if (error) return { why: 'server', detail: error.message };
+      return { sb };
+    } catch (e) { console.warn('Push setup failed', e); return { why: 'server', detail: e.message }; }
+  }
+
+  // ---------- reminders ----------
+  async function schedule(c, fireAt, eta, min) {
+    const entry = { fireAt: fireAt.toISOString(), eta: eta.toISOString(), min };
+    const title = `About ${LEAD_MIN} min from ${c.insured}`;
+    const body = `Tap to text them you're ${LEAD_MIN} minutes out.`;
+    const url = location.origin + location.pathname + '?omw=' + encodeURIComponent(c.id);
+    const p = await pushReady();
+    if (p.sb) {
+      const { data, error } = await p.sb.from('reminders').insert({ claim_id: c.id, fire_at: entry.fireAt, title, body, url }).select('id').single();
+      if (!error) {
+        entry.rid = data.id; pending[c.id] = entry; savePending(); refresh();
+        return `<p>🔔 Reminder set for <b>${clock(fireAt)}</b>. Your phone will buzz then, even while you're in Google Maps. Tap the notification to send the text.</p>`;
+      }
+      p.why = 'server'; p.detail = error.message;
+    }
+    entry.local = true; entry.title = title; entry.body = body;
+    pending[c.id] = entry; savePending(); arm(c.id); refresh();
+    const why = {
+      signin: 'You\'re not signed in to cloud sync (Settings → Cloud sync), so',
+      'ios-install': 'On iPhone, notifications need the tracker added to your Home Screen, so',
+      unsupported: 'This browser can\'t show notifications, so',
+      denied: 'Notifications are turned off for this app, so',
+      server: 'Reminders aren\'t set up in Supabase yet (see README), so'
+    }[p.why] || 'Notifications aren\'t available, so';
+    return `<p>🔔 Reminder set for <b>${clock(fireAt)}</b>.</p><p class="small stale-warn">${why} the reminder only works while this app stays open on your screen.</p>`;
+  }
+  // In-app fallback: fires only while the app is running.
+  function arm(id) {
+    clearTimeout(timers[id]);
+    const p = pending[id]; if (!p || !p.local) return;
+    timers[id] = setTimeout(async () => {
+      if (!pending[id]) return;
+      try {
+        if ('Notification' in window && Notification.permission === 'granted' && navigator.serviceWorker) {
+          const reg = await Promise.race([navigator.serviceWorker.ready, new Promise((_, no) => setTimeout(no, 3000))]);
+          await reg.showNotification(p.title, { body: p.body, tag: 'omw-' + id, data: { url: location.origin + location.pathname + '?omw=' + encodeURIComponent(id) }, requireInteraction: true });
+        }
+      } catch { }
+      if (navigator.vibrate) navigator.vibrate([300, 150, 300]);
+      openTwenty(id);
+    }, Math.max(0, Date.parse(p.fireAt) - Date.now()));
+  }
+  async function cancel(id, silent) {
+    const p = pending[id]; if (!p) return;
+    clearTimeout(timers[id]); delete pending[id]; savePending();
+    if (p.rid) { const sb = cloud(); if (sb) sb.from('reminders').update({ cancelled: true }).eq('id', p.rid).then(() => { }, () => { }); }
+    refresh();
+    if (!silent) toast('Reminder cancelled.');
+  }
+  const refresh = () => { try { if (typeof renderToday === 'function') renderToday(); } catch { } };
+
+  // Opens the text, ready to send, when the reminder goes off.
+  function openTwenty(id) {
+    const p = pending[id];
+    delete pending[id]; savePending(); clearTimeout(timers[id]); refresh();
+    if (!claimById(id)) return;
+    if (dlg.open) dlg.close();
+    const left = p ? Math.max(1, Math.round((Date.parse(p.eta) - Date.now()) / 60000)) : LEAD_MIN;
+    openText(id, 'onway', { minutes: String(Math.min(left, LEAD_MIN + 5)) });
+  }
+
+  function badge(id) {
+    const p = pending[id]; if (!p) return '';
+    return ` · <span class="omw-badge">🔔 text at ${clock(p.fireAt)} (arrive ~${clock(p.eta)})</span> <a href="#" data-omw-cancel="${esc(id)}" class="small">cancel</a>`;
+  }
+
+  // ---------- the On my way flow ----------
+  function actions(c, min, sendNow) {
+    const a = [];
+    if (sendNow) a.push(`<button type="button" class="btn primary" data-omw-text="${esc(c.id)}" data-min="${min}">💬 Text them you're ${min} min away</button>`);
+    a.push(`<a class="btn ${sendNow ? '' : 'primary'}" href="${esc(navHref(c.address))}" target="_blank" rel="noopener" data-omw-nav>🧭 Start Google Maps</a>`);
+    if (!sendNow && min) a.push(`<button type="button" class="btn" data-omw-text="${esc(c.id)}" data-min="${min}">💬 Text them now instead (${min} min away)</button>`);
+    if (pending[c.id]) a.push(`<button type="button" class="btn" data-omw-cancel="${esc(c.id)}">Cancel reminder</button>`);
+    return `<div class="omw-actions">${a.join('')}</div>`;
+  }
+  async function start(id) {
+    const c = claimById(id); if (!c) return;
+    if (!c.address) { toast('Add an address to this claim first.'); return; }
+    // Ask for notifications right away: phones only allow the prompt straight after a tap.
+    const perm = 'Notification' in window && Notification.permission === 'default' ? Notification.requestPermission().catch(() => 'default') : Promise.resolve();
+    $('#omwWho').textContent = c.insured + (c.address ? ' · ' + street(c.address) : '');
+    show('<p>📍 Finding your location…</p>');
+    if (!dlg.open) dlg.showModal();
+    try {
+      const [pos] = await Promise.all([here(), perm]);
+      show('<p>🛣️ Working out your drive time…</p>');
+      if (!(await ensureGeo(c))) throw new Error('Couldn\'t find this claim\'s address on the map. Check the address and try again.');
+      save();
+      const d = await driveMinutes(pos, c);
+      const min = Math.max(1, Math.round(d.min));
+      const eta = new Date(Date.now() + min * 60000), fireAt = new Date(eta.getTime() - LEAD_MIN * 60000);
+      await cancel(id, true);
+      const head = `<p class="omw-big">About <b>${min} min</b> away · arrive around <b>${clock(eta)}</b></p>` +
+        (d.real ? '' : '<p class="muted small">Straight-line estimate (road directions unavailable right now).</p>');
+      if (min <= LEAD_MIN + 2) { show(head + `<p>You're already about ${LEAD_MIN} minutes out or closer, so send the text now.</p>` + actions(c, min, true)); return; }
+      show(head + '<p class="muted">Setting your reminder…</p>');
+      const note = await schedule(c, fireAt, eta, min);
+      show(head + note + actions(c, min, false));
+    } catch (e) {
+      show(`<p class="stale-warn">${esc(e.message)}</p>` + actions(c, null, false));
+    }
+  }
+
+  document.addEventListener('click', e => {
+    const go = e.target.closest('[data-omw]'), cx = e.target.closest('[data-omw-cancel]'), tx = e.target.closest('[data-omw-text]');
+    if (go) { e.preventDefault(); e.stopPropagation(); start(go.dataset.omw); return; }
+    if (cx) { e.preventDefault(); e.stopPropagation(); cancel(cx.dataset.omwCancel); if (dlg.open) dlg.close(); return; }
+    if (tx) { e.preventDefault(); dlg.close(); openText(tx.dataset.omwText, 'onway', { minutes: tx.dataset.min }); return; }
+    if (e.target.closest('[data-omw-close]')) dlg.close();
+    if (e.target.closest('[data-omw-nav]')) setTimeout(() => dlg.close(), 300);
+  }, true);
+
+  // A tapped notification opens the app with ?omw=<claim>, or messages an app that's already open.
+  if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.type === 'omw') openTwenty(e.data.id); });
+  const fromUrl = new URLSearchParams(location.search).get('omw');
+  if (fromUrl) {
+    history.replaceState(null, '', location.pathname + location.hash);
+    setTimeout(() => openTwenty(fromUrl), 400);
+  }
+  Object.keys(pending).forEach(arm);
+
+  // Settings: a test button, so the setup can be checked without driving anywhere.
+  (() => {
+    const settings = document.querySelector('#tab-settings .settings'); if (!settings) return;
+    const p = document.createElement('div'); p.className = 'panel'; p.id = 'omwPanel';
+    p.innerHTML = `<h2>On my way reminders</h2>
+      <p class="muted small" style="margin-top:0">Tap <b>🚗 On my way</b> on today's inspections. The tracker works out your drive time, starts Google Maps, and buzzes your phone when you're about ${LEAD_MIN} minutes out so you can text the insured in one tap.</p>
+      <button type="button" class="btn" id="omwTest">🔔 Send a test reminder (arrives in about a minute)</button>
+      <div class="muted small" id="omwTestNote" style="margin-top:6px"></div>`;
+    const cloudPanel = $('#cloudPanel');
+    if (cloudPanel) cloudPanel.after(p); else settings.prepend(p);
+    $('#omwTest').addEventListener('click', async () => {
+      const note = $('#omwTestNote');
+      if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission().catch(() => { });
+      note.textContent = 'Setting it up…';
+      const r = await pushReady();
+      if (!r.sb) {
+        note.textContent = ({ signin: 'Sign in to cloud sync first (above).', 'ios-install': 'On iPhone, add the tracker to your Home Screen and open it from there first.',
+          unsupported: 'This browser can\'t get notifications. Use the installed app on your phone.', denied: 'Notifications are blocked for this app. Turn them on in your phone\'s settings for this app, then try again.',
+          server: 'Reminders aren\'t set up in Supabase yet (see README).' })[r.why] + (r.detail ? ' (' + r.detail + ')' : '');
+        return;
+      }
+      const { error } = await r.sb.from('reminders').insert({ claim_id: null, fire_at: new Date(Date.now() + 30000).toISOString(), title: '🔔 Test reminder', body: 'Reminders work on this phone.', url: location.origin + location.pathname + '#tab=settings' });
+      note.textContent = error ? 'Couldn\'t set the test reminder: ' + error.message : '✓ Test reminder set. Lock your phone or switch to another app; it should buzz within about a minute.';
+    });
+  })();
+
+  window.omw = { start, cancel, badge, openTwenty, pending: () => ({ ...pending }) };
+  refresh();
 })();
 </script>
 <script>

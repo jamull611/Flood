@@ -1,6 +1,6 @@
 // Offline support: keeps the tracker and its libraries on the device so it opens without internet.
 // The app itself is fetched fresh when online (so updates show up), and falls back to the saved copy offline.
-const CACHE = 'claim-tracker-v12';
+const CACHE = 'claim-tracker-v13';
 const APP = ['./', './adjuster-claim-tracker.html', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 const LIBS = ['https://unpkg.com/leaflet@1.9.4/dist/leaflet.css', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
@@ -33,4 +33,26 @@ self.addEventListener('fetch', e => {
     })));
   }
   // Everything else (maps, routing, Supabase, AdStrat) goes straight to the network.
+});
+
+// ---------- reminders ("On my way") ----------
+// Supabase sends a push message when it's time to text the insured; show it as a notification.
+self.addEventListener('push', e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { title: 'Claim Tracker', body: e.data && e.data.text() }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'Claim Tracker', {
+    body: d.body || '', tag: d.tag || 'omw', renotify: true, requireInteraction: true,
+    icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url: d.url || './adjuster-claim-tracker.html' }
+  }));
+});
+// Tapping it opens the tracker with the text ready to send (or switches to the tracker if it's open).
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || './adjuster-claim-tracker.html';
+  const id = new URL(url, self.location.href).searchParams.get('omw');
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    const open = list.find(c => c.url.startsWith(self.registration.scope));
+    if (open && id) { open.postMessage({ type: 'omw', id }); return open.focus(); }
+    return self.clients.openWindow(url);
+  }));
 });
