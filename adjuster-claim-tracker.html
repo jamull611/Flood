@@ -344,7 +344,8 @@ h4 { margin: 16px 0 8px; font-size: 14px; display: flex; align-items: center; ga
   .toolbar { gap: 6px; }
   .toolbar #search { flex: 1 1 100%; min-width: 0; }
   .toolbar select { flex: 1 1 calc(50% - 6px); min-width: 0; }
-  .toolbar > .btn.primary { flex: 1 1 100%; }
+  .toolbar > .btn.primary, .toolbar > #syncAdstrat { flex: 1 1 100%; }
+  #asPaste { width: 100%; min-height: 70px; font-size: 16px; }
   input, select, textarea { font-size: 16px; }
   .list .item { flex-direction: column; align-items: stretch; gap: 8px; padding: 12px; }
   .item-actions { justify-content: flex-start; }
@@ -424,7 +425,7 @@ h4 { margin: 16px 0 8px; font-size: 14px; display: flex; align-items: center; ga
     <div class="cards" id="cards"></div>
     <div class="toolbar">
       <button class="btn primary" data-new-claim>+ Add claim</button>
-      <button class="btn desktop-only" id="syncAdstrat" title="Pull in claims from AdStrat">⟳ Sync from AdStrat</button>
+      <button class="btn" id="syncAdstrat" title="Pull in claims from AdStrat">⟳ Sync from AdStrat</button>
       <input id="search" type="search" placeholder="Search insured, claim #, notes, address…">
       <select id="fEvent"><option value="">All events</option></select>
       <select id="fStatus"></select>
@@ -584,6 +585,27 @@ h4 { margin: 16px 0 8px; font-size: 14px; display: flex; align-items: center; ga
           <p class="muted small" id="asAutoHelp" style="margin:0 0 8px">Works while Chrome is open on this computer and you're signed in to AdStrat (tick <b>Remember Me</b>). If the tracker isn't open, it opens briefly in a background tab, syncs, and closes. With cloud sync on, the claims then show up on your phone. If AdStrat signs you out, the extension's icon shows a <b>!</b>; click it to sign back in.</p>
         </div>
         <div id="extOff">
+          <div class="phone-only" id="asPhone">
+            <p class="muted small" style="margin-top:0">On your phone, a bookmark copies your claims list from AdStrat, then <b>⟳ Sync from AdStrat</b> on the Claims tab brings them in. Set the bookmark up once:</p>
+            <button class="btn primary" id="asCopyCode" type="button" style="width:100%;margin-bottom:10px">📋 Copy bookmark code</button>
+            <details class="small" style="margin-bottom:8px"><summary style="cursor:pointer;font-weight:600">iPhone (Safari)</summary>
+              <ol style="padding-left:18px;margin:6px 0 0">
+                <li>Tap <b>Copy bookmark code</b> above.</li>
+                <li>In <b>Safari</b>, open any page (AdStrat is fine), tap <b>Share</b> (square with arrow) → <b>Add Bookmark</b>. Name it <b>Copy AdStrat claims</b> and tap <b>Save</b>.</li>
+                <li>Tap the <b>Bookmarks</b> icon (open book) → <b>Edit</b> → tap <b>Copy AdStrat claims</b>. Tap its address, delete it, and <b>Paste</b> the code. Tap <b>Done</b>.</li>
+              </ol>
+              <p style="margin:6px 0 0"><b>Each time:</b> in Safari, sign in to AdStrat and open your <b>claims list</b>. Tap Bookmarks → <b>Copy AdStrat claims</b> → <b>Copy for tracker</b>. Then open this app → Claims → <b>⟳ Sync from AdStrat</b> and tap <b>Paste</b> if asked.</p>
+            </details>
+            <details class="small"><summary style="cursor:pointer;font-weight:600">Android (Chrome)</summary>
+              <ol style="padding-left:18px;margin:6px 0 0">
+                <li>Tap <b>Copy bookmark code</b> above.</li>
+                <li>In <b>Chrome</b>, open any page (AdStrat is fine), tap <b>⋮</b> → <b>☆</b> to bookmark it.</li>
+                <li>Tap <b>⋮</b> → <b>Bookmarks</b>, then <b>⋮</b> next to the new bookmark → <b>Edit</b>. Name it <b>Copy AdStrat claims</b>, replace the URL by pasting the code, and go back to save.</li>
+              </ol>
+              <p style="margin:6px 0 0"><b>Each time:</b> in Chrome, sign in to AdStrat and open your <b>claims list</b>. Tap the address bar, type <b>Copy AdStrat</b> and tap the bookmark (★) in the suggestions → <b>Copy for tracker</b>. Then open this app → Claims → <b>⟳ Sync from AdStrat</b> and allow pasting if asked.</p>
+            </details>
+          </div>
+          <div class="desktop-only">
           <p class="muted small" style="margin-top:0">Install the Chrome extension once, and the Sync button pulls straight from AdStrat whenever you're signed in there. Your AdStrat password is never stored, and nothing in AdStrat is ever changed.</p>
           <ol class="small" style="padding-left:18px;margin:0 0 10px">
             <li>In Chrome, go to <b>chrome://extensions</b> and turn on <b>Developer mode</b> (top right).</li>
@@ -599,6 +621,7 @@ h4 { margin: 16px 0 8px; font-size: 14px; display: flex; align-items: center; ga
               <li>Back here, click <b>⟳ Sync from AdStrat</b>.</li>
             </ol>
           </details>
+          </div>
         </div>
         <p class="muted small">New claims are added. Claims already in the tracker are matched by AdStrat ID, or by claim # and insured name the first time, and updated: reserves, inspection date, status (forward only) and AdStrat stage. Your notes, contact log and Paid/Closed statuses are never changed.</p>
         <div class="muted small" id="asLast"></div>
@@ -1262,6 +1285,19 @@ function runAdstratImport(text) {
   return syncSummary(r);
 }
 const hasExt = () => document.documentElement.hasAttribute('data-adstrat-ext');
+// Phones can't always read the clipboard directly; this box takes a manual paste instead.
+function showPasteBox() {
+  const note = $('#syncNote');
+  note.innerHTML = `<div style="margin-top:6px">On AdStrat, tap your <b>Copy AdStrat claims</b> bookmark → <b>Copy for tracker</b>. Then long-press below and tap <b>Paste</b>:</div>
+    <textarea id="asPaste" placeholder="Paste here" style="margin-top:6px"></textarea>
+    <div class="row" style="margin-top:6px"><button class="btn small" id="asPasteGo" type="button">Import</button><a href="#" id="asHowTo" class="small">How do I set up the bookmark?</a></div>`;
+  const box = $('#asPaste');
+  let done = false;
+  const go = () => { if (done) return; const t = box.value; if (t.includes(AS_MARK)) { done = true; note.textContent = runAdstratImport(t); } else if (t.trim()) toast('That isn\'t AdStrat data. Tap the bookmark on AdStrat and Copy for tracker again.', 5000); };
+  box.addEventListener('input', () => { if (box.value.includes(AS_MARK)) go(); });
+  $('#asPasteGo').addEventListener('click', go);
+  $('#asHowTo').addEventListener('click', e => { e.preventDefault(); showTab('settings'); $('#asPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+}
 function renderAdstrat() {
   const last = S().adstratLast;
   $('#asLast').textContent = last ? 'Last synced ' + new Date(last).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Not synced yet';
@@ -1343,6 +1379,7 @@ function wireAdstrat() {
     let text = '';
     try { text = await navigator.clipboard.readText(); } catch (e) { }
     if (text.includes(AS_MARK)) { $('#syncNote').textContent = runAdstratImport(text); return; }
+    if (isPhone()) return showPasteBox();
     if (!S().adstratLast) {
       showTab('settings');
       const p = $('#asPanel'); p.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1351,7 +1388,13 @@ function wireAdstrat() {
     }
     $('#syncNote').innerHTML = 'Nothing from AdStrat on the clipboard. On AdStrat, click your <b>Copy AdStrat claims</b> bookmark → <b>Copy for tracker</b>, then click Sync again. (Setup is under Settings.)';
   });
-  $('#asBookmarklet').href = 'javascript:' + encodeURIComponent('(' + adstratGrabber.toString() + ')(' + adstratParse.toString() + ')');
+  const bookmarkCode = 'javascript:' + encodeURIComponent('(' + adstratGrabber.toString() + ')(' + adstratParse.toString() + ')');
+  $('#asBookmarklet').href = bookmarkCode;
+  $('#asCopyCode').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(bookmarkCode); }
+    catch (e) { const t = document.createElement('textarea'); t.value = bookmarkCode; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
+    toast('Bookmark code copied. Now paste it as the bookmark\'s address (steps below).', 5000);
+  });
   $('#asBookmarklet').addEventListener('click', e => { e.preventDefault(); alert('Drag this button onto your bookmarks bar (Ctrl+Shift+B shows the bar). Then click the bookmark while you\'re on your AdStrat claims list.'); });
   if (location.protocol === 'file:') {
     const dir = decodeURIComponent(location.pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/[^/]*$/, '').replace(/\//g, '\\');
