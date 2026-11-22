@@ -127,8 +127,10 @@ On a claim, open **Report → Photos**:
    high-water marks, interior room by room (overview first), mechanical, contents, documents.
 3. Check the captions, fix anything, and move photos with ↑ ↓ if needed.
 4. **⬇ Photos (.zip)**: the original full-size photos renamed in order (`001 Front elevation.jpg`, …) plus
-   `captions.csv`. Good for importing into Xactimate. **📄 Photo report (PDF)**: two photos per page with
-   captions and a header (insured, claim #, address, event, date of loss).
+   `captions.csv`. Good for importing into Xactimate. **📄 Photo sheet (PDF)**: the AdStrat-style photo sheet:
+   header with your firm, insured, claim # and policy #; two photos per page, each with
+   "Level/Room - n- INSURED RISK", Date Taken, Taken By and the caption. Set the firm name and address under
+   Settings → Photo captions.
 
 Only the labels are saved on the claim (and synced). The photos stay on your phone, so add the same photos
 again later and their captions come back without being labeled again. Settings → **Photo captions** lets you

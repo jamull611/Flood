@@ -35,12 +35,13 @@ const SCHEMA = {
               'built-in appliances, ductwork. contents: personal property. documents: data plates, serial numbers, receipts, paperwork. ' +
               'other: anything else.',
           },
-          room: { type: 'string', description: 'Room or area name, e.g. "Kitchen", "Primary Bedroom", "Rear Elevation". Empty string if none applies.' },
+          level: { type: 'string', description: 'Level, as in Xactimate: "Exterior" for anything outside, otherwise "Main Level", "Basement", "Upper Level", "Crawlspace", "Garage" or "Attic". Use the same spelling every time.' },
+          room: { type: 'string', description: 'Room or area name, e.g. "Kitchen", "Primary Bedroom", "Rear Elevation". Use the level name again when the whole level is one space, e.g. an unfinished "Basement". Empty string if none applies.' },
           overview: { type: 'boolean', description: 'True if this is a wide shot showing the whole room or elevation, rather than a detail.' },
           title: { type: 'string', description: 'Short title for a file name, 2 to 6 words, e.g. "Kitchen base cabinets".' },
           caption: { type: 'string', description: 'One-sentence photo report caption.' },
         },
-        required: ['index', 'section', 'room', 'overview', 'title', 'caption'],
+        required: ['index', 'section', 'level', 'room', 'overview', 'title', 'caption'],
         additionalProperties: false,
       },
     },
@@ -51,16 +52,16 @@ const SCHEMA = {
 
 const SYSTEM = `You label inspection photos for a flood insurance adjuster's photo report.
 
-For each photo, give its report section, the room or area, a short title, and a one-sentence caption.
+For each photo, give its report section, the level and room (as in Xactimate), a short title, and a one-sentence caption.
 
 Captions:
-- Start with the area, then what the photo shows: "Kitchen – lower cabinets delaminated at toe kick." "Rear elevation – silt line on siding."
+- Say plainly what the photo shows, in an adjuster's words: "Indoor air handler. Model and S/N not present on the unit at the time of inspection." "Lower cabinets delaminated at toe kick." "Silt line on siding, rear elevation."
 - Describe only what is visible. Use flood terms where they fit: water line, high-water mark, wicking, saturated drywall, delamination, silt/debris, standing water, mold growth.
 - Give a measurement only if a tape measure or ruler in the photo shows it, and say so ("water line approx. 14 in. per tape measure").
 - Never guess causes, values, ages or coverage.
 - For contents and appliances, name the item and any visible brand or model.
 
-Rooms: reuse a room name from the "Rooms so far" list when the photo shows the same room, spelled the same way, so every photo of a room groups together.
+Levels and rooms: reuse a level/room from the "Rooms so far" list when the photo shows the same room, spelled the same way, so every photo of a room groups together.
 
 Return one entry for every photo, using the photo number as index.`;
 

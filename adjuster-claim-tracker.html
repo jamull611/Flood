@@ -271,6 +271,7 @@ h4 { margin: 16px 0 8px; font-size: 14px; display: flex; align-items: center; ga
 .ph-top { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .ph-top select { flex: 0 1 150px; min-width: 0; }
 .ph-top input { flex: 1 1 120px; min-width: 0; }
+.ph-top input.ph-level { flex: 0 1 110px; }
 .ph-move { display: flex; gap: 2px; margin-left: auto; }
 .ph-main textarea { width: 100%; box-sizing: border-box; resize: vertical; }
 @media (max-width: 760px) { .ph-thumb { width: 72px; height: 56px; } }
@@ -581,6 +582,11 @@ h4 { margin: 16px 0 8px; font-size: 14px; display: flex; align-items: center; ga
         <h2>Photo captions</h2>
         <p class="muted small" style="margin-top:0">How the AI should write photo captions (claim → Report → Photos). Optional: describe your style or paste a few captions you like, e.g. "Use Rear elevation, not Back of house. Always mention the water line height when a tape is visible."</p>
         <textarea id="photoStyle" rows="4" style="width:100%;box-sizing:border-box" placeholder="Your caption style (optional)"></textarea>
+        <h2 style="margin-top:16px">Photo sheet header</h2>
+        <div class="grid2">
+          <label class="f">Firm name <input id="sheetFirm" placeholder="e.g. Administrative Strategies"></label>
+          <label class="f">Firm address (2 lines) <textarea id="sheetAddress" rows="2" placeholder="Street&#10;City, ST ZIP"></textarea></label>
+        </div>
       </div>
 
       <div class="panel">
@@ -2607,11 +2613,13 @@ $('#textCopy').addEventListener('click', async () => {
 // ===== ui-settings.js =====
 'use strict';
 // ---------- settings ----------
+['sheetFirm', 'sheetAddress'].forEach(id => $('#' + id).addEventListener('input', e => { S()[id] = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); }));
 $('#photoStyle').addEventListener('input', e => { S().photoStyle = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); });
 function renderSettings() {
   const s = S();
   $('#meName').value = s.me.name; $('#mePhone').value = s.me.phone;
   $('#photoStyle').value = s.photoStyle || '';
+  $('#sheetFirm').value = s.sheetFirm || ''; $('#sheetAddress').value = s.sheetAddress || '';
   $('#callOpen').value = s.contact.open; $('#callClose').value = s.contact.close;
   $('#offStart').value = String(s.offer.startIn); $('#offDays').value = s.offer.days; $('#offStep').value = String(s.offer.step);
   $('#tplRows').innerHTML = Object.keys(TEMPLATE_NAMES).map(k => `<label class="f">${esc(TEMPLATE_NAMES[k])}${s.templates[k] !== DEFAULT_TEMPLATES[k] ? ` <a href="#" data-tplreset="${k}" class="small">reset</a>` : ''}<textarea rows="3" data-tpl-edit="${k}">${esc(s.templates[k])}</textarea></label>`).join('');
@@ -3875,6 +3883,9 @@ window.TRACKER_CONFIG = {
   let items = [], claimId = null, busy = false;
   const keyOf = f => `${f.name}|${f.size}|${f.lastModified}`;
   const claim = () => claimById(claimId);
+  // Level for the photo sheet title ("Basement/Basement"); older labels without one get a sensible default.
+  const OUTSIDE = ['risk', 'address', 'exterior', 'water_line'];
+  const levelOf = l => (l && l.level) || (l && OUTSIDE.includes(l.section) ? 'Exterior' : (l && l.room) || '');
   const labels = () => { const c = claim(); c.photoLabels = c.photoLabels || {}; return c.photoLabels; };
 
   // ---------- dialog ----------
@@ -3886,11 +3897,12 @@ window.TRACKER_CONFIG = {
       <label class="btn primary">＋ Add photos<input type="file" id="phPick" accept="image/*" multiple hidden></label>
       <button type="button" class="btn" id="phLabel">✨ Label with AI</button>
       <button type="button" class="btn" id="phZip">⬇ Photos (.zip)</button>
-      <button type="button" class="btn" id="phPdf">📄 Photo report (PDF)</button>
+      <button type="button" class="btn" id="phPdf">📄 Photo sheet (PDF)</button>
       <button type="button" class="btn small" id="phSort">↕ Put back in report order</button>
     </div>
     <div class="small" id="phStatus" style="margin:4px 0 10px"></div>
     <div id="phList"></div>
+    <datalist id="phLevels"><option>Exterior</option><option>Main Level</option><option>Basement</option><option>Upper Level</option><option>Crawlspace</option><option>Garage</option><option>Attic</option></datalist>
   </div>
 </dialog>`);
   const pdlg = $('#photoDlg');
@@ -3980,6 +3992,7 @@ window.TRACKER_CONFIG = {
         <div class="ph-main">
           <div class="ph-top"><b>${i + 1}</b>
             <select data-f="section" aria-label="Section">${[['', it.status === 'labeling' ? 'Labeling…' : 'Not labeled'], ...SECTIONS].map(([k, n]) => `<option value="${k}" ${k === (l.section || '') ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+            <input data-f="level" value="${esc(levelOf(l))}" placeholder="Level" aria-label="Level" list="phLevels" class="ph-level">
             <input data-f="room" value="${esc(l.room || '')}" placeholder="Room / area" aria-label="Room">
             <span class="ph-move"><button type="button" class="btn icon small" data-mv="-1" aria-label="Move up">↑</button><button type="button" class="btn icon small" data-mv="1" aria-label="Move down">↓</button><button type="button" class="btn icon small" data-rm aria-label="Remove">✕</button></span>
           </div>
@@ -3996,7 +4009,7 @@ window.TRACKER_CONFIG = {
     const L = labels(), k = row.dataset.k;
     L[k] = L[k] || { section: '', room: '', overview: false, title: '', caption: '' };
     L[k][f] = e.target.value;
-    if (f === 'caption' || f === 'room') L[k].edited = true;
+    if (f === 'caption' || f === 'room' || f === 'level') L[k].edited = true;
     clearTimeout(open.t); open.t = setTimeout(save, 600);
   });
   $('#phList').addEventListener('change', e => { if (e.target.dataset.f === 'section') { save(); } });
@@ -4046,12 +4059,12 @@ window.TRACKER_CONFIG = {
     busy = true; todo.forEach(i => { i.status = 'labeling'; }); render();
     const batches = []; for (let i = 0; i < todo.length; i += BATCH) batches.push(todo.slice(i, i + BATCH));
     const L = labels();
-    const rooms = () => [...new Set(Object.values(L).map(l => l.room).filter(Boolean))];
+    const rooms = () => [...new Set(Object.values(L).filter(l => l.room).map(l => (l.level ? l.level + ' / ' : '') + l.room))];
     let done = 0, failed = 0, firstError = '';
     const run = async b => {
       try {
         const res = await callLabels(b, rooms(), jwt);
-        for (const p of res) { L[p.item.key] = { section: p.section, room: p.room, overview: !!p.overview, title: p.title, caption: p.caption }; p.item.status = 'done'; }
+        for (const p of res) { L[p.item.key] = { section: p.section, level: p.level || '', room: p.room, overview: !!p.overview, title: p.title, caption: p.caption }; p.item.status = 'done'; }
         b.filter(i => i.status === 'labeling').forEach(i => { i.status = 'error'; failed++; });
       } catch (e) { b.forEach(i => { i.status = 'error'; }); failed += b.length; firstError = firstError || e.message; }
       done += b.length;
@@ -4127,7 +4140,7 @@ window.TRACKER_CONFIG = {
     const names = fileNames(), L = labels(), files = [];
     status('Building the zip…');
     for (let i = 0; i < items.length; i++) files.push({ name: names[i], data: new Uint8Array(await items[i].file.arrayBuffer()) });
-    const csv = ['Photo,File,Section,Room,Caption', ...items.map((it, i) => { const l = L[it.key] || {}; return [i + 1, names[i], sectionName(l.section), l.room || '', l.caption || ''].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','); })].join('\r\n');
+    const csv = ['Photo,File,Section,Level,Room,Caption', ...items.map((it, i) => { const l = L[it.key] || {}; return [i + 1, names[i], sectionName(l.section), levelOf(l), l.room || '', l.caption || ''].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','); })].join('\r\n');
     files.push({ name: 'captions.csv', data: new TextEncoder().encode('﻿' + csv) });
     await deliver(zip(files), `${baseName()} photos.zip`);
     status(`✓ ${items.length} photos renamed in report order, plus captions.csv with every caption.`);
@@ -4137,36 +4150,59 @@ window.TRACKER_CONFIG = {
     if (window.jspdf) return Promise.resolve(window.jspdf);
     return new Promise((res, rej) => { const s = document.createElement('script'); s.src = JSPDF_URL; s.onload = () => res(window.jspdf); s.onerror = () => rej(new Error('The PDF maker needs an internet connection to load.')); document.head.appendChild(s); });
   }
+  // Photo sheet in the AdStrat layout: header (Photo Sheet, firm, insured/claim/policy), two photos per page with
+  // "Level/Room - n- INSURED RISK", Date Taken, Taken By and the caption beside each, footer with page and date.
+  const mdy = d => `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
   $('#phPdf').addEventListener('click', async () => {
-    status('Making the photo report…');
+    status('Making the photo sheet…');
     let lib; try { lib = await loadJsPDF(); } catch (e) { status(`<span class="stale-warn">${esc(e.message)}</span>`); return; }
-    const c = claim(), L = labels(), me = S().me || {};
+    const c = claim(), L = labels(), st = S();
     const doc = new lib.jsPDF({ unit: 'pt', format: 'letter' });
-    const W = 612, H = 792, M = 40, per = 2, slotH = (H - 2 * M - 40) / per;
-    const head = [c.insured, c.claimNo && 'Claim # ' + c.claimNo].filter(Boolean).join(' · ');
-    const sub = [c.address, c.event && c.event + ' flood', c.dol && 'DOL ' + fmtDate(c.dol)].filter(Boolean).join(' · ');
-    const pages = Math.ceil(items.length / per);
+    const W = 612, LM = 31, RM = 563, IMG_R = 428, TXT_X = 434, TXT_W = 135;
+    const insured = String(c.insured || '').toUpperCase(), takenBy = String((st.me && st.me.name) || '').toUpperCase();
+    const firm = (st.sheetFirm || '').trim(), firmAddr = (st.sheetAddress || '').trim().split(/\n/).slice(0, 2);
+    const today = mdy(new Date()), pages = Math.ceil(items.length / 2);
+    const SLOTS = [{ top: 107, h: 300 }, { top: 412, h: 297 }];
     for (let p = 0; p < pages; p++) {
       if (p) doc.addPage();
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.text(head || 'Photo report', M, M);
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(90); doc.text(doc.splitTextToSize(sub, W - 2 * M)[0] || '', M, M + 13); doc.setTextColor(0);
-      for (let s = 0; s < per; s++) {
-        const i = p * per + s; if (i >= items.length) break;
-        const it = items[i], l = L[it.key] || {};
-        const top = M + 28 + s * slotH, boxW = W - 2 * M, boxH = slotH - 52;
-        const scale = Math.min(boxW / it.w, boxH / it.h), w = it.w * scale, h = it.h * scale;
-        doc.addImage('data:image/jpeg;base64,' + it.small, 'JPEG', M + (boxW - w) / 2, top, w, h, undefined, 'FAST');
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
-        doc.text(`Photo ${i + 1}${l.room ? ' · ' + l.room : ''}`, M, top + h + 14);
-        doc.setFont('helvetica', 'normal');
-        doc.text(doc.splitTextToSize(l.caption || '', boxW).slice(0, 3), M, top + h + 27);
-      }
-      doc.setFontSize(8); doc.setTextColor(120);
-      doc.text(`${me.name ? me.name + ' · ' : ''}Page ${p + 1} of ${pages}`, W - M, H - 20, { align: 'right' });
+      // header
       doc.setTextColor(0);
+      doc.setFont('times', 'bold'); doc.setFontSize(24); doc.text('Photo Sheet', LM, 46);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+      if (firm) doc.text(firm, LM, 66);
+      firmAddr.forEach((line, i) => doc.text(line, LM, 84 + i * 11.5));
+      [['Insured:', insured], ['Claim #:', c.claimNo || ''], ['Policy #:', c.policyNo || '']].forEach(([k, v], i) => {
+        doc.setFont('times', 'normal'); doc.setFontSize(8.5); doc.text(k, 368, 37 + i * 19.5, { align: 'right' });
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.text(String(v), 385, 37 + i * 19.5);
+      });
+      doc.setDrawColor(120); doc.setLineWidth(0.6); doc.line(LM, 104, RM, 104);
+      // photos
+      for (let s2 = 0; s2 < 2; s2++) {
+        const i = p * 2 + s2; if (i >= items.length) break;
+        const it = items[i], l = L[it.key] || {}, slot = SLOTS[s2];
+        const boxW = IMG_R - LM, scale = Math.min(boxW / it.w, slot.h / it.h), w = it.w * scale, h = it.h * scale;
+        doc.addImage('data:image/jpeg;base64,' + it.small, 'JPEG', LM + (boxW - w) / 2, slot.top, w, h, undefined, 'FAST');
+        let y = slot.top + 48;
+        const lvl = levelOf(l), room = l.room || lvl;
+        const title = `${[lvl, room].filter(Boolean).join('/') || 'Photo'} - ${i + 1}- ${insured} RISK`;
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+        for (const line of doc.splitTextToSize(title, TXT_W)) { doc.text(line, TXT_X, y); y += 11; }
+        y += 7;
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+        doc.text(`Date Taken: ${mdy(new Date(it.taken))}`, TXT_X, y); y += 18;
+        doc.text('Taken By:', TXT_X, y); doc.text(takenBy, TXT_X + 56, y); y += 18;
+        doc.setFont('times', 'normal'); doc.setFontSize(8.5);
+        for (const line of doc.splitTextToSize(l.caption || '', TXT_W).slice(0, 12)) { doc.text(line, TXT_X, y); y += 10; }
+      }
+      // footer
+      doc.setDrawColor(0); doc.setLineWidth(0.5); doc.line(36, 751, 565, 751);
+      doc.setFont('times', 'normal'); doc.setFontSize(8.5);
+      doc.text('Photo Sheet', 61, 764);
+      doc.text(`- ${p + 1} -`, 300, 764, { align: 'center' });
+      doc.text(today, 528, 764, { align: 'right' });
     }
-    await deliver(doc.output('blob'), `${baseName()} photo report.pdf`);
-    status(`✓ Photo report with ${items.length} photos, ${per} per page.`);
+    await deliver(doc.output('blob'), `${baseName()} photo sheet.pdf`);
+    status(`✓ Photo sheet with ${items.length} photos, 2 per page.` + (firm ? '' : ' Tip: add your firm\'s name and address under Settings → Photo captions so they print in the header.'));
   });
 
   // ---------- entry point on the claim's Report tab ----------
