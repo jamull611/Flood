@@ -3870,7 +3870,8 @@ window.TRACKER_CONFIG = {
   const cfg = window.TRACKER_CONFIG || {};
   const FN_URL = cfg.supabaseUrl ? cfg.supabaseUrl.replace(/\/+$/, '') + '/functions/v1/photo-labels' : '';
   const JSPDF_URL = 'https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js';
-  const BATCH = 8, PARALLEL = 3, SEND_PX = 1280, THUMB_PX = 240;
+  // One batch at a time keeps within Anthropic's per-minute limits (new accounts have low ones).
+  const BATCH = 8, SEND_PX = 1280, THUMB_PX = 240;
   const SECTIONS = [
     ['risk', 'Front / risk'], ['address', 'Address'], ['exterior', 'Exterior'], ['water_line', 'High-water mark'],
     ['interior', 'Interior'], ['mechanical', 'Mechanical'], ['contents', 'Contents'], ['documents', 'Documents'], ['other', 'Other']];
@@ -4052,7 +4053,7 @@ window.TRACKER_CONFIG = {
     }
     return [...seen].map(([k, l]) => `${k}: ${l.caption}`);
   }
-  async function callLabels(batch, rooms, jwt) {
+  async function callLabels(batch, rooms, jwt, onWait) {
     const c = claim();
     const body = {
       photos: batch.map((it, n) => ({ index: n + 1, data: it.small, taken: new Date(it.taken).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) })),
@@ -4066,7 +4067,12 @@ window.TRACKER_CONFIG = {
       } catch (e) { j = { error: 'No connection. Check your internet and try again.', retry: true }; }
       if (r && r.ok && Array.isArray(j.photos)) return j.photos.map(p => ({ ...p, item: batch[p.index - 1] })).filter(p => p.item);
       if (r && r.status === 404) throw new Error('Photo labeling isn\'t set up in Supabase yet (see README: photo-labels).');
-      if (j.retry && attempt < 2) { await new Promise(res => setTimeout(res, 4000 * (attempt + 1))); continue; }
+      // Rate limits: wait as long as Anthropic asks, then carry on (up to 8 times). Other hiccups: 2 quick retries.
+      if (j.retry && (j.rateLimited ? attempt < 8 : attempt < 2)) {
+        const secs = j.rateLimited ? (j.retryAfter || 30) : 4 * (attempt + 1);
+        for (let left = secs; left > 0; left--) { if (onWait) onWait(left); await new Promise(res => setTimeout(res, 1000)); }
+        continue;
+      }
       throw new Error(j.error || `Labeling failed (${r ? r.status : 'no connection'}).`);
     }
   }
@@ -4083,7 +4089,7 @@ window.TRACKER_CONFIG = {
     let done = 0, failed = 0, firstError = '';
     const run = async b => {
       try {
-        const res = await callLabels(b, rooms(), jwt);
+        const res = await callLabels(b, rooms(), jwt, left => status(`Labeled ${done} of ${todo.length}. Waiting for Anthropic's per-minute limit… continuing in ${left}s`));
         for (const p of res) { L[p.item.key] = { section: p.section, level: p.level || '', room: p.room, overview: !!p.overview, title: p.title, caption: p.caption }; p.item.status = 'done'; }
         b.filter(i => i.status === 'labeling').forEach(i => { i.status = 'error'; failed++; });
       } catch (e) { b.forEach(i => { i.status = 'error'; }); failed += b.length; firstError = firstError || e.message; }
@@ -4093,9 +4099,7 @@ window.TRACKER_CONFIG = {
     };
     try {
       status(`Labeling… 0 of ${todo.length} photos`);
-      await run(batches[0]);   // first batch alone, so later batches reuse its room names
-      const rest = batches.slice(1);
-      while (rest.length) await Promise.all(rest.splice(0, PARALLEL).map(run));
+      for (const b of batches) await run(b);   // in order, so each batch reuses the rooms and captions before it
     } finally {
       busy = false; sortItems(); savePositions(); render();
     }

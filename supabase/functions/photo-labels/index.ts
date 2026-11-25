@@ -75,7 +75,9 @@ const cors = {
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
-const anthropic = new Anthropic(); // reads the ANTHROPIC_API_KEY secret
+// Reads the ANTHROPIC_API_KEY secret. Retries are left to the app (it waits out rate limits and shows a
+// countdown), so one slow retry here can't run past the function's time limit.
+const anthropic = new Anthropic({ maxRetries: 0 });
 const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 
 type PhotoIn = { index: number; data: string; name?: string; taken?: string };
@@ -136,7 +138,12 @@ Deno.serve(async (req) => {
     return json({ photos: out.photos, model: response.model, usage: { input: response.usage.input_tokens, output: response.usage.output_tokens } });
   } catch (e) {
     if (e instanceof Anthropic.AuthenticationError) return json({ error: 'The Anthropic API key is missing or wrong (Supabase > Edge Functions > Secrets > ANTHROPIC_API_KEY).' }, 500);
-    if (e instanceof Anthropic.RateLimitError) return json({ error: 'Too many photos at once. Wait a minute and try again.', retry: true }, 429);
+    if (e instanceof Anthropic.RateLimitError) {
+      // Anthropic says how long to wait; pass it on so the app can pause and carry on by itself.
+      const after = Number(e.headers?.get('retry-after')) || 30;
+      return json({ error: 'Anthropic\'s per-minute limit was reached.', retry: true, rateLimited: true, retryAfter: Math.min(Math.max(after, 5), 120) }, 429);
+    }
+    if (e instanceof Anthropic.APIError && e.status === 529) return json({ error: 'Claude is busy right now.', retry: true, rateLimited: true, retryAfter: 20 }, 503);
     if (e instanceof Anthropic.BadRequestError) return json({ error: 'Claude couldn\'t read these photos: ' + e.message }, 400);
     if (e instanceof Anthropic.APIError) return json({ error: `Claude is unavailable right now (${e.status}). Try again.`, retry: true }, 502);
     if (e instanceof SyntaxError) return json({ error: 'Claude\'s answer couldn\'t be read. Try again.', retry: true }, 502);
