@@ -63,6 +63,9 @@ Captions:
 
 Levels and rooms: reuse a level/room from the "Rooms so far" list when the photo shows the same room, spelled the same way, so every photo of a room groups together.
 
+When the adjuster gives caption preferences, follow them over these defaults: match their wording, sentence pattern and level of detail.
+When "Captions so far" lists a caption for a room, reuse that exact wording for general photos of the same room; write a new caption only for close-ups, equipment, contents or something different.
+
 Return one entry for every photo, using the photo number as index.`;
 
 const cors = {
@@ -76,7 +79,7 @@ const anthropic = new Anthropic(); // reads the ANTHROPIC_API_KEY secret
 const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 
 type PhotoIn = { index: number; data: string; name?: string; taken?: string };
-type Body = { photos: PhotoIn[]; rooms?: string[]; style?: string; claim?: { address?: string; event?: string } };
+type Body = { photos: PhotoIn[]; rooms?: string[]; examples?: string[]; style?: string; claim?: { address?: string; event?: string } };
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -96,6 +99,7 @@ Deno.serve(async (req) => {
   }
 
   const rooms = (body.rooms ?? []).filter((r) => typeof r === 'string' && r.trim()).slice(0, 60);
+  const examples = (body.examples ?? []).filter((r) => typeof r === 'string' && r.trim()).slice(0, 40).map((r) => r.slice(0, 300));
   const content: Anthropic.Beta.BetaContentBlockParam[] = [];
   for (const p of photos) {
     const when = p.taken ? `, taken ${p.taken}` : '';
@@ -106,6 +110,7 @@ Deno.serve(async (req) => {
     body.claim?.event ? `Loss: ${body.claim.event} flood.` : '',
     body.claim?.address ? `Property: ${body.claim.address}.` : '',
     `Rooms so far: ${rooms.length ? rooms.join('; ') : '(none yet)'}`,
+    examples.length ? `Captions so far:\n${examples.join('\n')}` : '',
     body.style?.trim() ? `The adjuster's caption preferences:\n${body.style.trim().slice(0, 2000)}` : '',
     `Label photos ${photos.map((p) => p.index).join(', ')}.`,
   ].filter(Boolean).join('\n');

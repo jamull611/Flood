@@ -4032,11 +4032,21 @@ window.TRACKER_CONFIG = {
     const { data } = await sb.auth.getSession();
     return data && data.session && data.session.access_token;
   }
+  // The first general caption for each room, so later batches word that room's photos the same way.
+  function roomExamples() {
+    const seen = new Map();
+    for (const l of Object.values(labels())) {
+      if (!l.room || !l.caption) continue;
+      const k = (l.level ? l.level + ' / ' : '') + l.room;
+      if (!seen.has(k) || (l.overview && !seen.get(k).overview)) seen.set(k, l);
+    }
+    return [...seen].map(([k, l]) => `${k}: ${l.caption}`);
+  }
   async function callLabels(batch, rooms, jwt) {
     const c = claim();
     const body = {
       photos: batch.map((it, n) => ({ index: n + 1, data: it.small, taken: new Date(it.taken).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) })),
-      rooms, style: S().photoStyle || '', claim: { address: c.address || '', event: c.event || '' }
+      rooms, examples: roomExamples(), style: S().photoStyle || '', claim: { address: c.address || '', event: c.event || '' }
     };
     for (let attempt = 0; ; attempt++) {
       let r, j = {};
