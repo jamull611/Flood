@@ -263,8 +263,8 @@ h4 { margin: 16px 0 8px; font-size: 14px; display: flex; align-items: center; ga
 .slot > span { flex: 1; }
 .ph-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
 .ph-actions .btn { width: 100%; padding: 10px 12px; }
-.ph-actions #phSort { grid-column: 1 / -1; padding: 6px 12px; }
-@media (min-width: 761px) { .ph-actions { grid-template-columns: repeat(4, auto); justify-content: start; } .ph-actions #phSort { grid-column: auto; } }
+.ph-actions #phSort { padding: 6px 12px; }
+@media (min-width: 761px) { .ph-actions { grid-template-columns: repeat(3, auto); justify-content: start; } }
 .ph-row { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--cp-border); }
 .ph-thumb { width: 96px; height: 72px; object-fit: cover; border-radius: 8px; flex: none; background: var(--cp-border); }
 .ph-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
@@ -2950,7 +2950,9 @@ startApp();
 // Leave them blank to use the tracker without cloud sync (claims stay on this device only).
 window.TRACKER_CONFIG = {
   supabaseUrl: 'https://xvhhhhugwsoxytovhhbb.supabase.co',
-  supabaseAnonKey: 'sb_publishable_IAAhXqHGPj5DoYrfXf0kuQ_flUN4d70'
+  supabaseAnonKey: 'sb_publishable_IAAhXqHGPj5DoYrfXf0kuQ_flUN4d70',
+  // Google Photos Picker (Google Cloud project "Claim Tracker"). Public by design: it only identifies the app.
+  googleClientId: '286544319605-dpg0t2egrp2u8hrca52lp486d4ngoa7e.apps.googleusercontent.com'
 };
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
@@ -3905,6 +3907,7 @@ window.TRACKER_CONFIG = {
   <div class="dlg-pane">
     <div class="ph-actions">
       <label class="btn primary">＋ Add photos<input type="file" id="phPick" accept="image/*" multiple hidden></label>
+      <button type="button" class="btn" id="phGoogle">🖼 From Google Photos</button>
       <button type="button" class="btn" id="phLabel">✨ Label with AI</button>
       <button type="button" class="btn" id="phZip">⬇ Photos (.zip)</button>
       <button type="button" class="btn" id="phPdf">📄 Photo sheet (PDF)</button>
@@ -3919,6 +3922,7 @@ window.TRACKER_CONFIG = {
   const status = html => { $('#phStatus').innerHTML = html; };
   // Photos stay in memory while you keep working on the same claim; opening another claim starts fresh.
   $('#phClose').addEventListener('click', () => pdlg.close());
+  $('#phGoogle').addEventListener('click', () => pickFromGoogle());
 
   function open(id) {
     if (busy && claimId !== id) { toast('Still labeling photos for another claim. Try again in a moment.'); return; }
@@ -3943,11 +3947,15 @@ window.TRACKER_CONFIG = {
     return { url, b64: url.slice(url.indexOf(',') + 1), w, h };
   }
   $('#phPick').addEventListener('change', async e => {
-    const files = [...e.target.files].filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|heic|webp)$/i.test(f.name));
+    const files = [...e.target.files];
     e.target.value = '';
+    await addFiles(files);
+  });
+  async function addFiles(all) {
+    const files = all.filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|heic|webp)$/i.test(f.name));
     if (!files.length) return;
     const have = new Set(items.map(i => i.key));
-    const fresh = files.filter(f => !have.has(keyOf(f)));
+    const fresh = files.filter(f => { const k = keyOf(f); if (have.has(k)) return false; have.add(k); return true; });   // skips repeats, also within this batch
     let n = 0, bad = 0;
     for (const f of fresh) {
       status(`Preparing photo ${++n} of ${fresh.length}…`);
@@ -3962,6 +3970,113 @@ window.TRACKER_CONFIG = {
     const fresh2 = items.filter(i => i.status === 'new').length;
     status(`${items.length} photo${items.length === 1 ? '' : 's'} added.` + (bad ? ` <span class="stale-warn">${bad} couldn't be read (HEIC photos: set the camera to save as JPEG).</span>` : '') +
       (fresh2 ? ` Tap <b>✨ Label with AI</b> to label ${fresh2} new photo${fresh2 === 1 ? '' : 's'} (about ${Math.max(1, Math.round(fresh2 * 1))}¢).` : ' All of them already have captions.'));
+  }
+
+  // ---------- from Google Photos (Photos Picker API) ----------
+  // Sign in with Google (in this browser only), open Google's picker, then download the picked originals
+  // and add them like any other photos. The tracker can only see the photos you pick.
+  const G_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
+  const G_API = 'https://photospicker.googleapis.com/v1';
+  let gToken = null, gTokenExp = 0, gClient = null, gSession = null;
+  function loadGis() {
+    if (window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
+    return new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client'; sc.onload = res; sc.onerror = () => rej(new Error('Google sign-in couldn\'t load. Check your internet connection.')); document.head.appendChild(sc); });
+  }
+  function googleToken() {
+    if (gToken && Date.now() < gTokenExp - 60000) return Promise.resolve(gToken);
+    return new Promise((res, rej) => {
+      gClient = google.accounts.oauth2.initTokenClient({
+        client_id: cfg.googleClientId, scope: G_SCOPE,
+        callback: r => { if (r && r.access_token) { gToken = r.access_token; gTokenExp = Date.now() + (r.expires_in || 3600) * 1000; res(gToken); } else rej(new Error((r && r.error_description) || 'Google sign-in was cancelled.')); },
+        error_callback: e => rej(new Error(e && e.type === 'popup_closed' ? 'Google sign-in was closed before finishing.' : 'Google sign-in didn\'t complete' + (e && e.type ? ' (' + e.type + ')' : '') + '.'))
+      });
+      gClient.requestAccessToken();
+    });
+  }
+  async function gFetch(path, opts = {}) {
+    const r = await fetch(G_API + path, { ...opts, headers: { Authorization: 'Bearer ' + gToken, ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
+    if (r.status === 401) { gToken = null; throw new Error('Google sign-in expired. Tap From Google Photos again.'); }
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error((j.error && j.error.message) || `Google Photos error ${r.status}`); }
+    return r.status === 204 ? {} : r.json().catch(() => ({}));
+  }
+  const secs = d => parseFloat(String(d || '').replace('s', '')) || 0;
+  // Download one picked photo: straight from Google if the browser allows it, otherwise through the photo-proxy helper.
+  let useProxy = false;
+  async function gDownload(item) {
+    const url = item.mediaFile.baseUrl + '=d';
+    if (!useProxy) {
+      try {
+        const r = await fetch(url, { headers: { Authorization: 'Bearer ' + gToken } });
+        if (!r.ok) throw new Error('Google Photos download failed (' + r.status + ')');
+        return await r.blob();
+      } catch (e) { if (!(e instanceof TypeError)) throw e; useProxy = true; }   // TypeError = blocked by the browser
+    }
+    const jwt = await token();
+    if (!jwt) throw new Error('Sign in under Settings → Cloud sync so photos can be downloaded.');
+    const r = await fetch(cfg.supabaseUrl.replace(/\/+$/, '') + '/functions/v1/photo-proxy', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + jwt, apikey: cfg.supabaseAnonKey }, body: JSON.stringify({ url, googleToken: gToken }) });
+    if (r.status === 404) throw new Error('Google blocked downloading photos straight into the browser. Deploy the photo-proxy helper in Supabase (see README), then try again.');
+    if (!r.ok) throw new Error('Downloading from Google Photos failed (' + r.status + ').');
+    return r.blob();
+  }
+  async function pickFromGoogle() {
+    if (!cfg.googleClientId) { status('<span class="stale-warn">Google Photos isn\'t set up for this copy of the tracker.</span>'); return; }
+    try {
+      await loadGis();
+      status('Signing in to Google…');
+      await googleToken();
+      status('Starting Google Photos…');
+      if (gSession) gFetch('/sessions/' + gSession.id, { method: 'DELETE' }).catch(() => { });
+      gSession = await gFetch('/sessions', { method: 'POST', body: JSON.stringify({ pickingConfig: { maxItemCount: '2000' } }) });
+      // A new window must open straight from a tap, so the picker gets its own button.
+      status(`<button type="button" class="btn primary" id="phGoOpen">Open Google Photos</button> <span class="muted">Select the claim's photos, then tap Done. The photos come in here.</span>`);
+    } catch (e) { status(`<span class="stale-warn">${esc(e.message)}</span>`); }
+  }
+  async function waitForPick(win) {
+    const s = gSession, every = Math.max(2, secs(s.pollingConfig && s.pollingConfig.pollInterval) || 3) * 1000;
+    const until = Date.now() + (secs(s.pollingConfig && s.pollingConfig.timeoutIn) || 1800) * 1000;
+    status('Waiting for you to pick photos in Google Photos… <button type="button" class="btn small" id="phGoCancel">Cancel</button>');
+    while (Date.now() < until && gSession === s) {
+      await new Promise(r => setTimeout(r, every));
+      if (gSession !== s) return;
+      const st = await gFetch('/sessions/' + s.id);
+      if (st.mediaItemsSet) break;
+    }
+    if (gSession !== s) return;
+    const picked = []; let page = '';
+    do {
+      const r = await gFetch(`/mediaItems?sessionId=${encodeURIComponent(s.id)}&pageSize=100${page ? '&pageToken=' + encodeURIComponent(page) : ''}`);
+      picked.push(...(r.mediaItems || []));
+      page = r.nextPageToken || '';
+    } while (page);
+    const seenIds = new Set();
+    const photos = picked.filter(m => m.type !== 'VIDEO' && m.mediaFile && m.mediaFile.baseUrl && !seenIds.has(m.id) && seenIds.add(m.id));
+    const files = []; let n = 0, failed = 0, firstErr = '';
+    const queue = [...photos];
+    const worker = async () => {
+      while (queue.length) {
+        const m = queue.shift();
+        try {
+          const blob = await gDownload(m);
+          files.push(new File([blob], m.mediaFile.filename || ('Google photo ' + m.id + '.jpg'), { type: m.mediaFile.mimeType || blob.type || 'image/jpeg', lastModified: Date.parse(m.createTime) || Date.now() }));
+        } catch (e) { failed++; firstErr = firstErr || e.message; }
+        status(`Downloading from Google Photos… ${++n} of ${photos.length}`);
+        if (failed && useProxy && /photo-proxy/.test(firstErr)) { queue.length = 0; }
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    gFetch('/sessions/' + s.id, { method: 'DELETE' }).catch(() => { });
+    gSession = null;
+    if (files.length) await addFiles(files);
+    if (failed) status((files.length ? $('#phStatus').innerHTML + ' ' : '') + `<span class="stale-warn">${failed} photo${failed === 1 ? '' : 's'} couldn't be downloaded: ${esc(firstErr)}</span>`);
+    else if (!files.length) status('No photos were picked.');
+  }
+  $('#phStatus').addEventListener('click', e => {
+    if (e.target.closest('#phGoOpen') && gSession) {
+      const win = window.open(gSession.pickerUri + '/autoclose', 'googlephotos', 'width=1000,height=760');
+      if (!win) { status('<span class="stale-warn">The browser blocked the Google Photos window. Allow pop-ups for this site (icon at the right of the address bar), then tap <b>Open Google Photos</b> again.</span> <button type="button" class="btn primary" id="phGoOpen">Open Google Photos</button>'); return; }
+      waitForPick(win).catch(err => { status(`<span class="stale-warn">${esc(err.message)}</span>`); gSession = null; });
+    }
+    if (e.target.closest('#phGoCancel') && gSession) { const id = gSession.id; gSession = null; gFetch('/sessions/' + id, { method: 'DELETE' }).catch(() => { }); status('Cancelled.'); }
   });
 
   // ---------- ordering ----------

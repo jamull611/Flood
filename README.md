@@ -121,7 +121,9 @@ on their own.
 
 ## Photo labeling
 On a claim, open **Report → Photos**:
-1. **＋ Add photos**: pick the inspection photos from your phone.
+1. **＋ Add photos**: pick the inspection photos from your phone or computer, or **🖼 From Google Photos**: sign in
+   with Google, tap **Open Google Photos**, select the claim's photos (up to 2,000) and tap Done. The originals
+   are downloaded into the Photos page. The tracker can only see the photos you pick.
 2. **✨ Label with AI**: Claude (claude-opus-5-5) labels each photo with its report section, room and a
    caption, and the photos are sorted into report order: front/risk, address, exterior elevations,
    high-water marks, interior room by room (overview first), mechanical, contents, documents.
@@ -142,3 +144,9 @@ Photos are sent to Anthropic's API to be labeled; check that your firm and carri
 2. Supabase → **Edge Functions → Secrets**: add `ANTHROPIC_API_KEY` with that key.
 3. Supabase → **Edge Functions → Deploy a new function → Via Editor**: name it `photo-labels`, paste all of
    `supabase/functions/photo-labels/index.ts`, and click **Deploy**. Leave **Verify JWT on**.
+
+**Google Photos setup** (done once, in the Google Cloud project "Claim Tracker"): Google Photos Picker API enabled;
+OAuth consent screen in Testing with your Google account as a test user and the scope
+`photospicker.mediaitems.readonly`; a Web OAuth client with origin `https://jamull611.github.io`. Its Client ID is
+in `TRACKER_CONFIG.googleClientId`. If the tracker says Google blocked the download, deploy
+`supabase/functions/photo-proxy/index.ts` as an Edge Function named `photo-proxy` (Verify JWT on).
