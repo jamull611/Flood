@@ -289,7 +289,7 @@ enum RoomExport {
         let objects: [[String: Any]] = room.objects.map { o in
             let hx = o.dimensions.x / 2, hz = o.dimensions.z / 2
             let corners = [simd_float3(-hx, 0, -hz), simd_float3(hx, 0, -hz), simd_float3(hx, 0, hz), simd_float3(-hx, 0, hz)].map { xz(o.transform, $0) }
-            return ["type": String(describing: o.category), "corners": corners, "h": r(o.dimensions.y)]
+            return ["type": String(describing: o.category), "corners": corners, "h": r(o.dimensions.y), "y": r(o.transform.columns.3.y - o.dimensions.y / 2)]
         }
         let floors: [[[Double]]] = room.floors.map { f in f.polygonCorners.map { xz(f.transform, $0) } }
         let floorY = room.floors.first.map { r($0.transform.columns.3.y) } ?? room.walls.map { r($0.transform.columns.3.y - $0.dimensions.y / 2) }.min() ?? 0

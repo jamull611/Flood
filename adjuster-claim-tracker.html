@@ -2408,6 +2408,7 @@ function renderReport(c) {
   const revs = c.revisions || [], open = revs.filter(r => !r.done).length;
   const nPh = window.photos ? window.photos.count(c) : 0;
   const nSk = window.sketch ? window.sketch.count(c) : 0;
+  const nCt = window.contents ? window.contents.count(c) : 0;
   $('#pane-report').innerHTML = `
     <div class="box" style="margin-bottom:12px"><div class="row" style="margin:0;justify-content:space-between">
       <span><b>📷 Photos</b> <span class="muted small">${nPh ? nPh + ' captioned' : 'Label, sort and rename your inspection photos'}</span></span>
@@ -2415,6 +2416,9 @@ function renderReport(c) {
     <div class="box" style="margin-bottom:12px"><div class="row" style="margin:0;justify-content:space-between">
       <span><b>📐 Sketch</b> <span class="muted small">${nSk ? nSk + ' room' + (nSk === 1 ? '' : 's') + ' scanned' : 'Floor plan from the iPad LiDAR scanner'}</span></span>
       <button type="button" class="btn small" data-sketch-open>${nSk ? 'Open sketch' : 'Sketch'}</button></div></div>
+    <div class="box" style="margin-bottom:12px"><div class="row" style="margin:0;justify-content:space-between">
+      <span><b>📦 Contents</b> <span class="muted small">${nCt ? nCt + ' line' + (nCt === 1 ? '' : 's') : 'Contents list, from the scan or by hand'}</span></span>
+      <button type="button" class="btn small" data-contents-open>${nCt ? 'Open contents' : 'Contents'}</button></div></div>
     <h4>Report progress <span class="count">${done}/${steps.length}</span></h4>
     <div class="progress"><div style="width:${steps.length ? done / steps.length * 100 : 0}%"></div></div>
     <ul class="checklist">${steps.map(s => `<li><label><input type="checkbox" data-step="${esc(s.key)}" ${prog[s.key] ? 'checked' : ''}> ${esc(s.label)}</label>${prog[s.key] ? `<span class="muted small">${fmtDate(prog[s.key])}</span>` : s.status ? `<span class="muted small">→ ${esc(s.status)}</span>` : ''}</li>`).join('')}</ul>
@@ -2424,7 +2428,7 @@ function renderReport(c) {
     <form class="row" id="revForm"><input id="revText" placeholder="e.g. Add photo of water line in garage" style="flex:1;min-width:0"><button class="btn" type="submit">Add</button></form>
     ${c.status === 'Revision Request' && revs.length && !open ? '<div class="box"><div class="box-title">All revision items are fixed.</div><button type="button" class="btn small primary" id="revDone">Mark Final (resubmitted)</button></div>' : ''}`;
 }
-$('#pane-report').addEventListener('click', e => { if (e.target.closest('[data-photos-open]') && window.photos) window.photos.open(editingId); if (e.target.closest('[data-sketch-open]') && window.sketch) window.sketch.open(editingId); });
+$('#pane-report').addEventListener('click', e => { if (e.target.closest('[data-photos-open]') && window.photos) window.photos.open(editingId); if (e.target.closest('[data-sketch-open]') && window.sketch) window.sketch.open(editingId); if (e.target.closest('[data-contents-open]') && window.contents) window.contents.open(editingId); });
 $('#pane-report').addEventListener('change', e => {
   const c = claimById(editingId); if (!c) return;
   const k = e.target.dataset.step, r = e.target.dataset.rev;
@@ -2624,7 +2628,7 @@ $('#textCopy').addEventListener('click', async () => {
 // ---------- settings ----------
 ['sheetFirm', 'sheetAddress'].forEach(id => $('#' + id).addEventListener('input', e => { S()[id] = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); }));
 // Version: bump together with CACHE in sw.js on every release.
-const APP_VERSION = 30;
+const APP_VERSION = 31;
 $('#appVersion').textContent = APP_VERSION;
 $('#photoStyle').addEventListener('input', e => { S().photoStyle = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); });
 function renderSettings() {
@@ -4601,8 +4605,19 @@ window.TRACKER_CONFIG = {
   const N = (m, o = {}) => CAP.nativePromise('TrackerNative', m, o);
   const JSPDF_URL = 'https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js';
   const LEVELS = ['Basement', 'Main Level', 'Upper Level', 'Attic', 'Crawlspace', 'Garage'];
-  const FT = 3.28084, SF = 10.7639;
-  let claimId = null, canScan = false, scanning = false, arrange = false, selId = null;
+  const FT = 3.28084, SF = 10.7639, IN = 0.0254;
+  let claimId = null, canScan = false, scanning = false, arrange = false, editing = false, addKind = null, selId = null;
+  const undo = [];
+  // What the scanner recognizes. cov: a starting guess for Contents or Building coverage; change it on the list.
+  const ITEM = {
+    bed: { name: 'Bed', short: 'Bed', cov: 'Contents' }, sofa: { name: 'Sofa', short: 'Sofa', cov: 'Contents' },
+    chair: { name: 'Chair', short: 'Chair', cov: 'Contents' }, table: { name: 'Table', short: 'Table', cov: 'Contents' },
+    television: { name: 'Television', short: 'TV', cov: 'Contents' }, washerDryer: { name: 'Washer / dryer', short: 'W/D', cov: 'Contents' },
+    storage: { name: 'Storage furniture (dresser, cabinet or shelf)', short: 'Storage', cov: 'Check' },
+    refrigerator: { name: 'Refrigerator', short: 'Fridge', cov: 'Building' }, stove: { name: 'Range / stove', short: 'Range', cov: 'Building' },
+    oven: { name: 'Oven', short: 'Oven', cov: 'Building' }, dishwasher: { name: 'Dishwasher', short: 'DW', cov: 'Building' },
+    sink: { short: 'Sink' }, toilet: { short: 'Toilet' }, bathtub: { short: 'Tub' }, fireplace: { short: 'Fireplace' }, stairs: { short: 'Stairs' },
+  };
   const claim = () => claimById(claimId);
   const rooms = c => ((c.sketch = c.sketch || { rooms: [] }).rooms = c.sketch.rooms || []);
   const lastLevel = () => { try { return localStorage.getItem('adjusterClaimTracker.scanLevel') || 'Main Level'; } catch { return 'Main Level'; } };
@@ -4619,12 +4634,26 @@ window.TRACKER_CONFIG = {
     for (const p of P.reverse()) { while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
     return lo.slice(0, -1).concat(up.slice(0, -1));
   }
-  const outline = r => { const f = (r.floors || []).filter(p => p.length >= 3).sort((a, b) => area(b) - area(a))[0]; return f || hull((r.walls || []).flatMap(w => [w.a, w.b])); };
+  // A room's shape: as scanned, or once you've edited it, your corners (r.edit.poly, in floor-plan meters) with
+  // doors, windows and openings kept on their walls (edge number e, position t from 0 to 1 along it, width w).
+  function geom(r) {
+    const E = r.edit; if (!E) return r;
+    const P = E.poly, n = P.length, h = E.h;
+    const on = d => {
+      const a = P[d.e], b = P[(d.e + 1) % n], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L;
+      const cx = a[0] + (b[0] - a[0]) * d.t, cy = a[1] + (b[1] - a[1]) * d.t, hw = Math.min(d.w, L) / 2;
+      return { ...d, a: [cx - ux * hw, cy - uy * hw], b: [cx + ux * hw, cy + uy * hw] };
+    };
+    const ok = d => d.e < n;
+    return { ...r, floors: [P], walls: P.map((a, i) => { const b = P[(i + 1) % n]; return { a, b, w: Math.hypot(b[0] - a[0], b[1] - a[1]), h, y: h / 2 }; }),
+      doors: (E.doors || []).filter(ok).map(on), windows: (E.windows || []).filter(ok).map(on), openings: (E.openings || []).filter(ok).map(on), objects: E.objects || [] };
+  }
+  const outline = r => { const g = geom(r), f = (g.floors || []).filter(p => p.length >= 3).sort((a, b) => area(b) - area(a))[0]; return f || hull((g.walls || []).flatMap(w => [w.a, w.b])); };
   const median = a => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 0; };
   function metrics(r) {
-    const p = outline(r), h = median((r.walls || []).map(w => w.h));
+    const g = geom(r), p = outline(r), h = r.edit ? r.edit.h : median((g.walls || []).map(w => w.h));
     const floor = p.length >= 3 ? area(p) * SF : 0;
-    return { floor, ceiling: floor, walls: (r.walls || []).reduce((s, w) => s + w.w * w.h, 0) * SF, perim: p.length >= 3 ? perim(p) * FT : 0, height: h, doors: (r.doors || []).length, windows: (r.windows || []).length, openings: (r.openings || []).length };
+    return { floor, ceiling: floor, walls: (g.walls || []).reduce((s, w) => s + w.w * w.h, 0) * SF, perim: p.length >= 3 ? perim(p) * FT : 0, height: h, doors: (g.doors || []).length, windows: (g.windows || []).length, openings: (g.openings || []).length };
   }
   const ftIn = m => { const i = Math.round(m * 39.3701); return `${Math.floor(i / 12)}' ${i % 12}"`; };
   const n0 = v => Math.round(v).toLocaleString();
@@ -4632,28 +4661,30 @@ window.TRACKER_CONFIG = {
   // Lay out one level. Rooms scanned in one session share coordinates; each session is turned so its walls run
   // straight across and up the page. Separate sessions, and rooms that landed on top of each other (the scanner's
   // tracking restarted), are set side by side. A room you moved by hand (r.place) goes exactly where you put it.
-  const mapRoom = (r, f) => ({
+  const mapRoom = (r, f) => { const g = geom(r); return {
     r, outline: outline(r).map(f),
-    walls: (r.walls || []).map(w => ({ ...w, a: f(w.a), b: f(w.b) })),
-    doors: (r.doors || []).map(w => ({ ...w, a: f(w.a), b: f(w.b) })),
-    windows: (r.windows || []).map(w => ({ ...w, a: f(w.a), b: f(w.b) })),
-    openings: (r.openings || []).map(w => ({ ...w, a: f(w.a), b: f(w.b) })),
-    objects: (r.objects || []).map(o => ({ ...o, corners: o.corners.map(f) })),
-  });
-  const xform = (t, T) => ({ r: t.r, outline: t.outline.map(T), walls: t.walls.map(w => ({ ...w, a: T(w.a), b: T(w.b) })), doors: t.doors.map(w => ({ ...w, a: T(w.a), b: T(w.b) })), windows: t.windows.map(w => ({ ...w, a: T(w.a), b: T(w.b) })), openings: t.openings.map(w => ({ ...w, a: T(w.a), b: T(w.b) })), objects: t.objects.map(o => ({ ...o, corners: o.corners.map(T) })) });
+    walls: (g.walls || []).map(w => ({ ...w, a: f(w.a), b: f(w.b) })),
+    doors: (g.doors || []).map(w => ({ ...w, a: f(w.a), b: f(w.b) })),
+    windows: (g.windows || []).map(w => ({ ...w, a: f(w.a), b: f(w.b) })),
+    openings: (g.openings || []).map(w => ({ ...w, a: f(w.a), b: f(w.b) })),
+    objects: (g.objects || []).map(o => ({ ...o, corners: o.corners.map(f) })),
+  }; };
+  const xform = (t, T) => ({ r: t.r, base: t.base, outline: t.outline.map(T), walls: t.walls.map(w => ({ ...w, a: T(w.a), b: T(w.b) })), doors: t.doors.map(w => ({ ...w, a: T(w.a), b: T(w.b) })), windows: t.windows.map(w => ({ ...w, a: T(w.a), b: T(w.b) })), openings: t.openings.map(w => ({ ...w, a: T(w.a), b: T(w.b) })), objects: t.objects.map(o => ({ ...o, corners: o.corners.map(T) })) });
   const ptsOf = t => [...t.outline, ...t.walls.flatMap(w => [w.a, w.b])];
   const bbox = pts => pts.length ? { x0: Math.min(...pts.map(p => p[0])), y0: Math.min(...pts.map(p => p[1])), x1: Math.max(...pts.map(p => p[0])), y1: Math.max(...pts.map(p => p[1])) } : { x0: 0, y0: 0, x1: 0, y1: 0 };
   const overlap = (a, b) => { const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0), h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0); if (w <= 0 || h <= 0) return 0; const s = Math.min((a.x1 - a.x0) * (a.y1 - a.y0), (b.x1 - b.x0) * (b.y1 - b.y0)) || 1; return w * h / s; };
   const rot = (p, c, a) => { const cs = Math.cos(a), sn = Math.sin(a), x = p[0] - c[0], y = p[1] - c[1]; return [c[0] + x * cs - y * sn, c[1] + x * sn + y * cs]; };
   function layout(list) {
     const sessions = {};
-    list.forEach(r => (sessions[r.session || r.id] = sessions[r.session || r.id] || []).push(r));
+    list.forEach(r => { const k = r.edit ? 'edit:' + r.id : r.session || r.id; (sessions[k] = sessions[k] || []).push(r); });
     const clusters = [];
     for (const g of Object.values(sessions)) {
       let sx = 0, sy = 0;
       g.forEach(r => (r.walls || []).forEach(w => { const t = Math.atan2(w.b[1] - w.a[1], w.b[0] - w.a[0]) * 4, L = w.w || 1; sx += Math.cos(t) * L; sy += Math.sin(t) * L; }));
       const ang = -Math.atan2(sy, sx) / 4;
-      const base = g.map(r => { const t = mapRoom(r, p => rot(p, [0, 0], ang)); t.box = bbox(ptsOf(t)); return t; });
+      // an edited room is already square to the page; a placed room keeps the turn it was placed with
+      const angOf = r => r.edit ? 0 : r.place && r.place.base != null ? r.place.base : ang;
+      const base = g.map(r => { const a = angOf(r), t = mapRoom(r, p => rot(p, [0, 0], a)); t.base = a; t.box = bbox(ptsOf(t)); return t; });
       // rooms that overlap a lot can't really share coordinates: start a new cluster for them
       const sub = [];
       for (const t of base) { const home = sub.find(cl => cl.every(o => overlap(o.box, t.box) < 0.3)); home ? home.push(t) : sub.push([t]); }
@@ -4680,37 +4711,50 @@ window.TRACKER_CONFIG = {
   }
 
   // Drawing as simple shapes, so the screen (SVG) and the PDF draw the same thing.
-  function shapes(lay, sel) {
+  function shapes(lay, sel, edit) {
     const S = [];
     lay.items.forEach(t => { if (t.outline.length >= 3) S.push({ id: t.r.id, k: 'poly', pts: t.outline, fill: sel === t.r.id ? '#fde68a' : '#eef3fb' }); });
-    lay.items.forEach(t => t.objects.forEach(o => S.push({ id: t.r.id, k: 'poly', pts: o.corners, stroke: '#b9c0ca', w: 0.02 })));
+    lay.items.forEach(t => t.objects.forEach((o, i) => {
+      const ed = edit && t.r.id === sel;
+      S.push({ id: t.r.id, k: 'poly', pts: o.corners, stroke: ed ? '#9ca3af' : '#b9c0ca', w: 0.02, fill: ed ? 'rgba(0,0,0,0.04)' : undefined, tag: ed ? 'obj-' + i : undefined });
+      const c = centroid(o.corners); S.push({ id: t.r.id, k: 'text', at: c, text: ITEM[o.type] ? ITEM[o.type].short : o.type, size: 0.15, color: '#6b7280', tag: ed ? 'obj-' + i : undefined });
+    }));
     lay.items.forEach(t => t.walls.forEach(w => S.push({ id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#1f2937', w: 0.12 })));
     lay.items.forEach(t => {
       t.openings.forEach(w => S.push({ id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#ffffff', w: 0.14 }, { id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#9aa3af', w: 0.03, dash: true }));
       t.doors.forEach(w => S.push({ id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#ffffff', w: 0.14 }, { id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#a0522d', w: 0.05 }));
       t.windows.forEach(w => S.push({ id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#ffffff', w: 0.10 }, { id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#2b7bd6', w: 0.04 }));
     });
+    // editing: wide invisible strips over walls, doors and windows so a finger can hit them
+    const T = 'rgba(0,0,0,0)';
+    lay.items.filter(t => edit && t.r.id === sel).forEach(t => {
+      t.walls.forEach((w, i) => S.push({ id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: T, w: 0.4, tag: 'wall-' + i }));
+      for (const kind of ['openings', 'doors', 'windows']) t[kind].forEach((w, i) => S.push({ id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: T, w: 0.45, tag: kind.slice(0, -1) + '-' + i }));
+    });
     lay.items.forEach(t => {
       const pts = t.outline.length >= 3 ? t.outline : t.walls.flatMap(w => [w.a, w.b]); if (!pts.length) return;
       const c = centroid(pts.length >= 3 ? pts : hull(pts));
       t.walls.forEach(w => {
-        if (w.w < 0.6) return;
+        if (w.w < 0.6 && !(edit && t.r.id === sel)) return;
         const mx = (w.a[0] + w.b[0]) / 2, my = (w.a[1] + w.b[1]) / 2, dx = w.b[0] - w.a[0], dy = w.b[1] - w.a[1], L = Math.hypot(dx, dy) || 1;
         let nx = -dy / L, ny = dx / L; if ((c[0] - mx) * nx + (c[1] - my) * ny < 0) { nx = -nx; ny = -ny; }
         let ang = Math.atan2(dy, dx) * 180 / Math.PI; if (ang > 90) ang -= 180; if (ang < -90) ang += 180;
-        S.push({ id: t.r.id, k: 'text', at: [mx + nx * 0.3, my + ny * 0.3], text: ftIn(w.w), size: 0.22, color: '#4b5563', rot: ang });
+        const ed = edit && t.r.id === sel;
+        S.push({ id: t.r.id, k: 'text', at: [mx + nx * 0.3, my + ny * 0.3], text: ftIn(w.w), size: ed ? 0.26 : 0.22, color: ed ? '#b45309' : '#4b5563', bold: ed, rot: ang, tag: ed ? 'len-' + t.walls.indexOf(w) : undefined });
       });
       S.push({ id: t.r.id, k: 'text', at: [c[0], c[1] - 0.12], text: t.r.name || 'Room', size: 0.32, color: '#111827', bold: true });
       S.push({ id: t.r.id, k: 'text', at: [c[0], c[1] + 0.3], text: `${n0(metrics(t.r).floor)} SF`, size: 0.24, color: '#4b5563' });
+      if (edit && t.r.id === sel) t.outline.forEach((p, i) => S.push({ id: t.r.id, k: 'circle', at: p, rad: 0.17, fill: '#f59e0b', tag: 'corner-' + i }));
     });
     return S;
   }
 
-  function svg(lay, level, sel, vb0) {
+  function svg(lay, level, sel, vb0, edit) {
     const pad = 0.8, vb = vb0 || `${(lay.x0 - pad).toFixed(3)} ${(lay.y0 - pad).toFixed(3)} ${(lay.W + 2 * pad).toFixed(3)} ${(lay.H + 2 * pad).toFixed(3)}`;
     const P = a => `${a[0].toFixed(3)},${a[1].toFixed(3)}`;
-    const body = shapes(lay, sel).map(s => {
-      const id = s.id ? `data-room="${esc(s.id)}"` : '';
+    const body = shapes(lay, sel, edit).map(s => {
+      const id = (s.id ? `data-room="${esc(s.id)}"` : '') + (s.tag ? ` data-tag="${s.tag}"` : '');
+      if (s.k === 'circle') return `<circle ${id} cx="${s.at[0]}" cy="${s.at[1]}" r="${s.rad}" fill="${s.fill}" stroke="#fff" stroke-width="0.04"/>`;
       if (s.k === 'poly') return `<polygon ${id} points="${s.pts.map(P).join(' ')}" fill="${s.fill || 'none'}" ${s.stroke ? `stroke="${s.stroke}" stroke-width="${s.w}"` : ''}/>`;
       if (s.k === 'line') return `<line ${id} x1="${s.a[0]}" y1="${s.a[1]}" x2="${s.b[0]}" y2="${s.b[1]}" stroke="${s.stroke}" stroke-width="${s.w}" stroke-linecap="${s.dash ? 'butt' : 'square'}" ${s.dash ? 'stroke-dasharray="0.12 0.08"' : ''}/>`;
       return `<text ${id} x="${s.at[0]}" y="${s.at[1]}" font-size="${s.size}" fill="${s.color}" text-anchor="middle" dominant-baseline="middle" ${s.bold ? 'font-weight="700"' : ''} ${s.rot ? `transform="rotate(${s.rot.toFixed(1)} ${s.at[0]} ${s.at[1]})"` : ''}>${esc(s.text)}</text>`;
@@ -4737,7 +4781,9 @@ window.TRACKER_CONFIG = {
 #sketchDlg th, #sketchDlg td { padding:4px 6px; border-bottom:1px solid var(--line, #e5e7eb); text-align:right; white-space:nowrap; }
 #sketchDlg th:first-child, #sketchDlg td:first-child { text-align:left; white-space:normal; }
 #sketchDlg .sk-tablewrap { overflow-x:auto; }
-#sketchDlg.arranging .sk-plan { touch-action:none; cursor:move; outline:2px dashed #f59e0b; }
+#sketchDlg.arranging .sk-plan, #sketchDlg.editing .sk-plan { touch-action:none; cursor:move; outline:2px dashed #f59e0b; }
+#sketchDlg.editing .sk-plan { cursor:pointer; }
+#sketchDlg .sk-water input { width:64px; }
 #sketchDlg .sk-tools { position:sticky; top:0; z-index:2; background:var(--card, #fff); padding:8px 0; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
 </style>`);
   document.body.insertAdjacentHTML('beforeend', `
@@ -4749,6 +4795,7 @@ window.TRACKER_CONFIG = {
       <button type="button" class="btn" id="skPdf">📄 Floor plan (PDF)</button>
       <button type="button" class="btn" id="sk3d" hidden>🧊 3D model</button>
       <button type="button" class="btn" id="skMove">✥ Move rooms</button>
+      <button type="button" class="btn" id="skEdit">✏️ Edit rooms</button>
       <button type="button" class="btn small" id="skRooms">Use these rooms for photo labeling</button>
     </div>
     <div id="skStatus" class="small muted" style="margin-bottom:8px"></div>
@@ -4767,12 +4814,20 @@ window.TRACKER_CONFIG = {
           <button type="button" class="btn primary" id="skScan" ${scanning ? 'disabled' : ''}>＋ Scan a room</button></div>
           <div class="small muted" style="margin-top:6px">Stand in the doorway, tap Scan, and slowly walk the room pointing the iPad at the walls. Tap Done, then Save room. Scan the rooms one after another without closing the app and they line up on the plan.</div></div>`
       : `<div class="small muted" style="margin-bottom:10px">${IOS ? 'This iPad has no LiDAR scanner, so it can\'t scan rooms. Scans made on a LiDAR iPad show up here.' : 'Rooms are scanned with the Claim Tracker app on your LiDAR iPad. Scans sync here, where you can see the floor plan and print it.'}</div>`;
-    $('#skPdf').disabled = $('#skRooms').disabled = $('#skMove').disabled = !list.length;
-    if (!list.length) arrange = false;
-    dlg.classList.toggle('arranging', arrange);
+    $('#skPdf').disabled = $('#skRooms').disabled = $('#skMove').disabled = $('#skEdit').disabled = !list.length;
+    if (!list.length) arrange = editing = false;
+    dlg.classList.toggle('arranging', arrange); dlg.classList.toggle('editing', editing);
     $('#skMove').textContent = arrange ? '✓ Done moving' : '✥ Move rooms';
+    $('#skEdit').textContent = editing ? '✓ Done editing' : '✏️ Edit rooms';
     const selR = list.find(r => r.id === selId);
-    const tools = !arrange ? '' : `<div class="sk-tools"><span class="small"><b>Drag a room</b> to move it (it snaps to nearby walls). <b>Tap a room</b> to turn it.</span>
+    const tools = editing ? `<div class="sk-tools">${!selR ? '<span class="small"><b>Tap a room</b> to edit it.</span>' : `
+        <span class="small">Editing <b>${esc(selR.name || 'Room')}</b>: drag the orange corners, tap a wall length to type it, tap a door, window or item to remove it.</span>
+        <label class="small">Ceiling height <input id="skHeight" value="${esc(ftIn(selR.edit ? selR.edit.h : metrics(selR).height))}" style="width:80px"></label>
+        ${['door', 'window', 'opening'].map(k => `<button type="button" class="btn small ${addKind === k ? 'primary' : ''}" data-add="${k}">＋ ${k[0].toUpperCase() + k.slice(1)}</button>`).join('')}
+        ${addKind ? `<span class="small"><b>Tap a wall</b> to put the ${addKind} there.</span>` : ''}
+        <button type="button" class="btn small" data-undo ${undo.length ? '' : 'disabled'}>↶ Undo</button>
+        <button type="button" class="btn small" data-unedit>Back to the scan</button>`}</div>`
+      : !arrange ? '' : `<div class="sk-tools"><span class="small"><b>Drag a room</b> to move it (it snaps to nearby walls). <b>Tap a room</b> to turn it.</span>
       ${selR ? `<span class="small">Selected: <b>${esc(selR.name || 'Room')}</b></span>
         <button type="button" class="btn small" data-turn="-90">↺ 90°</button><button type="button" class="btn small" data-turn="90">↻ 90°</button>
         <button type="button" class="btn small" data-turn="-2">⟲ 2°</button><button type="button" class="btn small" data-turn="2">⟳ 2°</button>
@@ -4781,13 +4836,15 @@ window.TRACKER_CONFIG = {
     const lv = byLevel(c);
     $('#skBody').innerHTML = !list.length ? '<p class="muted">No rooms scanned yet.</p>' : tools + lv.map(([lvl, rs]) => {
       const tot = rs.reduce((a, r) => { const m = metrics(r); a.floor += m.floor; a.walls += m.walls; a.perim += m.perim; return a; }, { floor: 0, walls: 0, perim: 0 });
-      return `<h4 style="margin:14px 0 6px">${esc(lvl)} <span class="count">${rs.length} room${rs.length === 1 ? '' : 's'} · ${n0(tot.floor)} SF</span></h4>
-        ${svg(layout(rs), lvl, arrange ? selId : null)}
+      const wl = ((c.sketch.water || {})[lvl]) || '';
+      return `<div class="row" style="margin:14px 0 6px;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px"><h4 style="margin:0">${esc(lvl)} <span class="count">${rs.length} room${rs.length === 1 ? '' : 's'} · ${n0(tot.floor)} SF</span></h4>
+        <label class="small sk-water">Interior water line <input data-water="${esc(lvl)}" value="${esc(String(wl))}" inputmode="decimal" placeholder="in."> in.</label></div>
+        ${svg(layout(rs), lvl, arrange || editing ? selId : null, null, editing)}
         <div class="sk-tablewrap"><table><thead><tr><th>Room</th><th>Floor SF</th><th>Wall SF</th><th>Ceiling SF</th><th>Floor perimeter LF</th><th>Ceiling height</th><th>Doors</th><th>Windows</th></tr></thead><tbody>
         ${rs.map(r => { const m = metrics(r); return `<tr><td>${esc(r.name || 'Room')}</td><td>${n0(m.floor)}</td><td>${n0(m.walls)}</td><td>${n0(m.ceiling)}</td><td>${n0(m.perim)}</td><td>${m.height ? ftIn(m.height) : ''}</td><td>${m.doors}</td><td>${m.windows}</td></tr>`; }).join('')}
         <tr><td><b>Total</b></td><td><b>${n0(tot.floor)}</b></td><td><b>${n0(tot.walls)}</b></td><td><b>${n0(tot.floor)}</b></td><td><b>${n0(tot.perim)}</b></td><td></td><td></td><td></td></tr></tbody></table></div>
         ${rs.map(r => `<div class="sk-room" data-id="${esc(r.id)}"><input data-f="name" value="${esc(r.name || '')}" placeholder="Room name"><select data-f="level">${[...new Set([...LEVELS, r.level])].map(l => `<option ${l === r.level ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><button type="button" class="btn icon small" data-del title="Delete this room">✕</button>
-          <div class="sk-m small muted">Scanned ${esc(new Date(r.scannedAt).toLocaleDateString())}${r.walls ? ` · ${r.walls.length} walls` : ''}${(r.objects || []).length ? ` · ${r.objects.length} fixtures` : ''}</div></div>`).join('')}`;
+          <div class="sk-m small muted">Scanned ${esc(new Date(r.scannedAt).toLocaleDateString())}${r.edit ? ' · edited' : ''} · ${geom(r).walls.length} walls${geom(r).objects.length ? ` · ${geom(r).objects.length} items: ${esc(itemSummary(geom(r).objects))}` : ''}</div></div>`).join('')}`;
     }).join('');
   }
 
@@ -4808,7 +4865,7 @@ window.TRACKER_CONFIG = {
       const r = res.room, c2 = claimById(claimId);
       const room = { id: 'r' + Date.now().toString(36), name: nameFor(c2, r, level), level, session: r.session, scannedAt: new Date().toISOString(),
         walls: r.walls, doors: r.doors, windows: r.windows, openings: r.openings, objects: r.objects, floors: r.floors, floorY: r.floorY };
-      rooms(c2).push(room); syncRoomList(c2); save();
+      rooms(c2).push(room); syncRoomList(c2); syncContents(c2); save();
       const m = metrics(room);
       status(`✓ Saved <b>${esc(room.name)}</b>: ${n0(m.floor)} SF floor, ${room.walls.length} walls, ${m.doors} doors, ${m.windows} windows. Rename it below if needed.`);
       render();
@@ -4825,19 +4882,22 @@ window.TRACKER_CONFIG = {
     if (row && e.target.closest('[data-del]')) {
       const c = claim(), r = rooms(c).find(x => x.id === row.dataset.id);
       if (!r || !confirm(`Delete the scan of "${r.name || 'Room'}"?`)) return;
-      c.sketch.rooms = rooms(c).filter(x => x !== r); syncRoomList(c); save(); render();
+      c.sketch.rooms = rooms(c).filter(x => x !== r); syncRoomList(c); syncContents(c); save(); render();
     }
   });
   dlg.addEventListener('change', e => {
     const row = e.target.closest('[data-id]'), f = e.target.dataset.f; if (!row || !f) return;
     const c = claim(), r = rooms(c).find(x => x.id === row.dataset.id); if (!r) return;
-    r[f] = e.target.value.trim(); syncRoomList(c); save(); render();
+    r[f] = e.target.value.trim(); syncRoomList(c); syncContents(c); save(); render();
   });
   // ---------- moving rooms by hand ----------
   const levelRooms = lvl => rooms(claim()).filter(r => (r.level || 'Main Level') === lvl);
   // Before the first move on a level, pin every room where it's drawn now, so moving one doesn't shift the others.
   function freeze(lvl) {
-    for (const t of layout(levelRooms(lvl)).items) if (!t.r.place) t.r.place = { dx: t.auto[0], dy: t.auto[1], rot: 0 };
+    for (const t of layout(levelRooms(lvl)).items) {
+      if (!t.r.place) t.r.place = { dx: t.auto[0], dy: t.auto[1], rot: 0, base: t.base };
+      else if (t.r.place.base == null) t.r.place.base = t.base;
+    }
   }
   function snap(lvl, r) {
     const lay = layout(levelRooms(lvl)), me = lay.items.find(t => t.r === r); if (!me) return;
@@ -4853,6 +4913,7 @@ window.TRACKER_CONFIG = {
   }
   let drag = null;
   $('#skBody').addEventListener('pointerdown', e => {
+    if (editing) return editDown(e);
     if (!arrange) return;
     const el = e.target.closest('[data-room]'), sv = e.target.closest('svg.sk-plan'); if (!el || !sv) return;
     e.preventDefault();
@@ -4867,12 +4928,12 @@ window.TRACKER_CONFIG = {
     const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(drag.inv), mx = p.x - drag.at.x, my = p.y - drag.at.y;
     if (!drag.moved && Math.hypot(mx, my) < 0.05) return;
     drag.moved = true;
-    drag.r.place.dx = drag.dx + mx; drag.r.place.dy = drag.dy + my; snap(drag.lvl, drag.r);
-    const html = svg(layout(levelRooms(drag.lvl)), drag.lvl, selId, drag.vb);
+    if (drag.corner != null) cornerMove(mx, my); else { drag.r.place.dx = drag.dx + mx; drag.r.place.dy = drag.dy + my; snap(drag.lvl, drag.r); }
+    const html = svg(layout(levelRooms(drag.lvl)), drag.lvl, selId, drag.vb, editing);
     drag.sv.outerHTML = html; drag.sv = $('#skBody').querySelector(`svg.sk-plan[data-level="${CSS.escape(drag.lvl)}"]`);
   });
-  window.addEventListener('pointerup', () => { if (!drag) return; drag = null; save(); render(); });
-  $('#skMove').addEventListener('click', () => { arrange = !arrange; if (!arrange) selId = null; render(); });
+  window.addEventListener('pointerup', () => { if (!drag) return; const d = drag; drag = null; if (d.corner != null && !d.moved) { undo.pop(); return; } if (d.corner != null) syncContents(claim()); save(); render(); });
+  $('#skMove').addEventListener('click', () => { arrange = !arrange; editing = false; addKind = null; if (!arrange) selId = null; render(); });
   $('#skBody').addEventListener('click', e => {
     const b = e.target.closest('[data-turn]');
     if (b) {
@@ -4888,6 +4949,153 @@ window.TRACKER_CONFIG = {
       targets.forEach(x => delete x.place); save(); render();
     }
   });
+  // ---------- editing a room's shape ----------
+  const simplify = P => {
+    let Q = P.filter((p, i) => Math.hypot(p[0] - P[(i + 1) % P.length][0], p[1] - P[(i + 1) % P.length][1]) > 0.05);
+    for (let changed = true; changed && Q.length > 3;) {
+      changed = false;
+      for (let i = 0; i < Q.length; i++) {
+        const a = Q[(i + Q.length - 1) % Q.length], b = Q[i], c = Q[(i + 1) % Q.length];
+        const cr = Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) / (Math.hypot(c[0] - a[0], c[1] - a[1]) || 1);
+        if (cr < 0.04) { Q.splice(i, 1); changed = true; break; }
+      }
+    }
+    return Q;
+  };
+  const nearestEdge = (P, m) => {
+    let best = { e: 0, t: 0.5, d: Infinity };
+    P.forEach((a, i) => { const b = P[(i + 1) % P.length], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+      const t = Math.max(0, Math.min(1, ((m[0] - a[0]) * dx + (m[1] - a[1]) * dy) / L2)), d = Math.hypot(a[0] + dx * t - m[0], a[1] + dy * t - m[1]);
+      if (d < best.d) best = { e: i, t, d }; });
+    return best;
+  };
+  // Turn a room into its editable form where it's drawn now (and fold any move or turn into its corners).
+  function bake(r) {
+    const lvl = r.level || 'Main Level'; freeze(lvl);
+    const t = layout(levelRooms(lvl)).items.find(x => x.r === r); if (!t) return;
+    if (r.edit) { r.edit = { ...r.edit, poly: t.outline, objects: t.objects }; }
+    else {
+      const P = simplify(t.outline.length >= 3 ? t.outline : hull(ptsOf(t)));
+      const pin = list => list.map(w => { const m = [(w.a[0] + w.b[0]) / 2, (w.a[1] + w.b[1]) / 2], ne = nearestEdge(P, m); return { e: ne.e, t: ne.t, w: w.w, h: w.h, y: w.y, open: w.open }; });
+      r.edit = { poly: P, h: metrics(r).height || 2.44, doors: pin(t.doors), windows: pin(t.windows), openings: pin(t.openings), objects: t.objects };
+    }
+    r.place = { dx: 0, dy: 0, rot: 0, base: 0 };
+  }
+  const snapshot = r => undo.push({ id: r.id, edit: JSON.stringify(r.edit || null), place: JSON.stringify(r.place || null) });
+  const svgPoint = (sv, e) => new DOMPoint(e.clientX, e.clientY).matrixTransform(sv.getScreenCTM().inverse());
+  function editDown(e) {
+    const el = e.target.closest('[data-room]'), sv = e.target.closest('svg.sk-plan'); if (!el || !sv) return;
+    const lvl = sv.dataset.level, r = levelRooms(lvl).find(x => x.id === el.dataset.room); if (!r) return;
+    if (r.id !== selId) { e.preventDefault(); selId = r.id; addKind = null; bake(r); save(); render(); return; }
+    const tag = el.dataset.tag || '';
+    if (tag.startsWith('corner-')) {
+      e.preventDefault(); snapshot(r);
+      const i = +tag.slice(7), at = svgPoint(sv, e);
+      drag = { lvl, r, corner: i, start: [...r.edit.poly[i]], inv: sv.getScreenCTM().inverse(), at, vb: sv.getAttribute('viewBox'), moved: false, sv };
+    }
+  }
+  // Dragging a corner: it lines up with the corners on either side when close, which keeps walls square.
+  function cornerMove(mx, my) {
+    const P = drag.r.edit.poly, n = P.length, i = drag.corner, p = [drag.start[0] + mx, drag.start[1] + my];
+    for (const j of [(i + n - 1) % n, (i + 1) % n]) { if (Math.abs(P[j][0] - p[0]) < 0.15) p[0] = P[j][0]; if (Math.abs(P[j][1] - p[1]) < 0.15) p[1] = P[j][1]; }
+    P[i] = p;
+  }
+  const parseLen = v => {
+    const s = String(v).trim().replace(/[’′]/g, "'").replace(/[”″]/g, '"'); if (!s) return null;
+    let m = s.match(/^(\d+(?:\.\d+)?)\s*'\s*(?:(\d+(?:\.\d+)?)\s*"?)?$/); if (m) return (+m[1] * 12 + (+m[2] || 0)) * IN;
+    m = s.match(/^(\d+(?:\.\d+)?)\s*"$/); if (m) return +m[1] * IN;
+    m = s.match(/^(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)$/); if (m) return (+m[1] * 12 + +m[2]) * IN;
+    m = s.match(/^(\d+(?:\.\d+)?)$/); if (m) return +m[1] * 12 * IN;
+    return null;
+  };
+  // Typing a wall's length moves its far end (and the next wall with it), so square rooms stay square.
+  function setLength(r, i, L) {
+    const P = r.edit.poly, n = P.length, a = P[i], b = P[(i + 1) % n], cur = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const dx = (b[0] - a[0]) / cur * (L - cur), dy = (b[1] - a[1]) / cur * (L - cur);
+    const move = n > 3 ? [(i + 1) % n, (i + 2) % n] : [(i + 1) % n];
+    for (const j of move) P[j] = [P[j][0] + dx, P[j][1] + dy];
+  }
+  $('#skBody').addEventListener('click', e => {
+    if (!editing) return;
+    const el = e.target.closest('[data-tag]'), r = rooms(claim()).find(x => x.id === selId);
+    if (!el || !r || !r.edit || el.dataset.room !== r.id) return;
+    const tag = el.dataset.tag, [kind, num] = [tag.replace(/-\d+$/, ''), +tag.split('-').pop()];
+    if (addKind && (kind === 'wall' || kind === 'len')) {
+      const P = r.edit.poly, sv = el.closest('svg'), pt = svgPoint(sv, e), ne = nearestEdge(P, [pt.x, pt.y]);
+      snapshot(r);
+      const w = { door: 0.81, window: 0.91, opening: 0.91 }[addKind];
+      r.edit[addKind + 's'] = r.edit[addKind + 's'] || [];
+      r.edit[addKind + 's'].push({ e: kind === 'len' ? num : ne.e, t: kind === 'len' ? 0.5 : ne.t, w, h: addKind === 'window' ? 1.2 : 2.03 });
+      addKind = null; save(); render(); return;
+    }
+    if (kind === 'len' || kind === 'wall') {
+      const P = r.edit.poly, a = P[num], b = P[(num + 1) % P.length];
+      const v = prompt('Length of this wall (feet and inches, e.g. 12\' 6")', ftIn(Math.hypot(b[0] - a[0], b[1] - a[1])));
+      if (v == null) return; const L = parseLen(v);
+      if (!L || L < 0.1) { status('<span class="stale-warn">Type a length like 12\' 6" or 12.5</span>'); return; }
+      snapshot(r); setLength(r, num, L); save(); render(); return;
+    }
+    if (['door', 'window', 'opening'].includes(kind)) {
+      if (!confirm(`Remove this ${kind}?`)) return;
+      snapshot(r); const list = r.edit[kind + 's'], g = geom(r)[kind + 's'][num];
+      r.edit[kind + 's'] = list.filter(d => !(d.e === g.e && d.t === g.t)); save(); render(); return;
+    }
+    if (kind === 'obj') {
+      const o = r.edit.objects[num], nm = (ITEM[o.type] && ITEM[o.type].name) || o.type;
+      if (!confirm(`Remove the ${nm.toLowerCase()} from ${r.name || 'this room'}? It also comes off the contents list.`)) return;
+      snapshot(r); r.edit.objects.splice(num, 1); syncContents(claim()); save(); render();
+    }
+  });
+  $('#skBody').addEventListener('click', e => {
+    const r = rooms(claim()).find(x => x.id === selId);
+    const ad = e.target.closest('[data-add]'); if (ad) { addKind = addKind === ad.dataset.add ? null : ad.dataset.add; render(); return; }
+    if (e.target.closest('[data-undo]')) {
+      const u = undo.pop(); if (!u) return; const x = rooms(claim()).find(y => y.id === u.id); if (!x) return;
+      const ed = JSON.parse(u.edit), pl = JSON.parse(u.place); if (ed) x.edit = ed; else delete x.edit; if (pl) x.place = pl; else delete x.place;
+      syncContents(claim()); save(); render(); return;
+    }
+    if (e.target.closest('[data-unedit]') && r) {
+      if (!confirm(`Throw away your changes to ${r.name || 'this room'} and go back to the scan?`)) return;
+      snapshot(r); delete r.edit; delete r.place; selId = null; syncContents(claim()); save(); render();
+    }
+  });
+  $('#skBody').addEventListener('change', e => {
+    if (e.target.id === 'skHeight') {
+      const r = rooms(claim()).find(x => x.id === selId), L = parseLen(e.target.value);
+      if (r && r.edit && L && L > 1) { snapshot(r); r.edit.h = L; save(); render(); } else status('<span class="stale-warn">Type a height like 8\' or 8\' 2"</span>');
+    }
+    if (e.target.dataset.water != null) {
+      const c = claim(), v = parseFloat(e.target.value);
+      c.sketch.water = c.sketch.water || {};
+      if (v > 0) c.sketch.water[e.target.dataset.water] = v; else delete c.sketch.water[e.target.dataset.water];
+      syncContents(c); save(); render();
+      const n = (c.contents || []).filter(x => x.below).length;
+      status(v > 0 ? `✓ Water line set. ${n} item${n === 1 ? '' : 's'} on the contents list sit below a water line.` : 'Water line cleared.');
+    }
+  });
+  $('#skEdit').addEventListener('click', () => { editing = !editing; arrange = false; addKind = null; if (!editing) selId = null; render(); });
+
+  // ---------- contents found by the scanner ----------
+  const itemSummary = objs => { const n = {}; objs.forEach(o => { const k = (ITEM[o.type] && ITEM[o.type].short) || o.type; n[k] = (n[k] || 0) + 1; }); return Object.entries(n).map(([k, v]) => v > 1 ? `${k} ×${v}` : k).join(', '); };
+  // One line per kind of item per room. Lines you changed are kept; scan lines whose items are gone are removed.
+  function syncContents(c) {
+    const list = c.contents = Array.isArray(c.contents) ? c.contents : [];
+    const want = {};
+    for (const r of rooms(c)) {
+      const g = geom(r), wl = +((c.sketch.water || {})[r.level || 'Main Level']) || 0;
+      for (const o of g.objects || []) {
+        const it = ITEM[o.type]; if (!it || !it.name) continue;
+        const k = r.id + ':' + o.type, bottom = o.y != null && r.floorY != null ? Math.max(0, o.y - r.floorY) : 0;
+        const w = want[k] = want[k] || { room: r.name || 'Room', level: r.level || 'Main Level', item: it.name, qty: 0, below: false, cov: it.cov };
+        w.qty++; if (wl > 0 && bottom < wl * IN) w.below = true;
+      }
+    }
+    c.contents = list.filter(x => !x.key || want[x.key] || x.edited);
+    for (const x of c.contents) if (x.key && want[x.key]) { const w = want[x.key]; x.below = w.below; x.room = x.edited ? x.room : w.room; x.level = w.level; if (!x.qtyEdited) x.qty = w.qty; }
+    for (const [k, w] of Object.entries(want)) if (!c.contents.some(x => x.key === k)) c.contents.push({ id: 'i' + Math.random().toString(36).slice(2, 9), key: k, source: 'scan', room: w.room, level: w.level, item: w.item, qty: w.qty, coverage: w.cov, damaged: null, below: w.below, notes: '' });
+    return c.contents;
+  }
+
   $('#skRooms').addEventListener('click', () => {
     const c = claim(), txt = roomListText(c);
     if (c.sketchRooms && c.sketchRooms !== c.sketch.autoRooms && c.sketchRooms !== txt && !confirm('Replace the room list you typed on the Photos screen with the scanned rooms?')) return;
@@ -4930,7 +5138,7 @@ window.TRACKER_CONFIG = {
             const a = X(s.a), b = X(s.b);
             doc.setDrawColor(...rgb(s.stroke)); doc.setLineWidth(Math.max(s.w * k, 0.3));
             if (s.dash) doc.setLineDashPattern([3, 2], 0); doc.line(a[0], a[1], b[0], b[1]); if (s.dash) doc.setLineDashPattern([], 0);
-          } else {
+          } else if (s.k === 'text') {
             const a = X(s.at); doc.setFont('helvetica', s.bold ? 'bold' : 'normal'); doc.setFontSize(Math.max(5, Math.min(s.size * k, s.bold ? 11 : 8))); doc.setTextColor(...rgb(s.color));
             doc.text(s.text, a[0], a[1], { align: 'center', baseline: 'middle', angle: s.rot ? -s.rot : 0 });
           }
@@ -4971,7 +5179,94 @@ window.TRACKER_CONFIG = {
     render();
     if (!dlg.open) dlg.showModal();
   }
-  window.sketch = { open, count: c => ((c && c.sketch && c.sketch.rooms) || []).length, metrics, layout, roomListText };
+  // ---------- Contents list (claim.contents): from the scan plus anything you add ----------
+  document.head.insertAdjacentHTML('beforeend', `<style>
+#contentsDlg table { border-collapse:collapse; width:100%; font-size:14px; }
+#contentsDlg th, #contentsDlg td { padding:4px; border-bottom:1px solid var(--line, #e5e7eb); vertical-align:middle; }
+#contentsDlg th { text-align:left; font-size:12px; color:var(--muted, #6b7280); }
+#contentsDlg td input[type=text], #contentsDlg td select { width:100%; box-sizing:border-box; min-width:0; }
+#contentsDlg td select { min-width:104px; }
+#contentsDlg td input[data-cf=item] { min-width:140px; }
+#contentsDlg td input[type=number] { width:56px; }
+#contentsDlg .ct-wrap { overflow-x:auto; }
+#contentsDlg .ct-below { font-size:11px; color:#b45309; white-space:nowrap; }
+</style>`);
+  document.body.insertAdjacentHTML('beforeend', `
+<dialog id="contentsDlg" class="sheet">
+  <div class="dlg-head"><div class="dlg-title"><div>📦 Contents</div><div class="muted small" id="ctWho"></div></div><button type="button" class="btn icon" id="ctClose" aria-label="Close">✕</button></div>
+  <div class="dlg-pane">
+    <div class="sk-actions" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      <button type="button" class="btn primary" id="ctAdd">＋ Add item</button>
+      <button type="button" class="btn" id="ctCsv">⬇ Contents list (CSV)</button>
+      <button type="button" class="btn small" id="ctSketch">📐 Open sketch</button>
+    </div>
+    <div class="small muted" id="ctNote" style="margin-bottom:8px"></div>
+    <div class="ct-wrap" id="ctBody"></div>
+  </div>
+</dialog>`);
+  const cdlg = $('#contentsDlg');
+  $('#ctClose').addEventListener('click', () => cdlg.close());
+  const isDamaged = x => x.damaged == null ? !!x.below : !!x.damaged;
+  function renderContents() {
+    const c = claim(); if (!c) return;
+    const list = c.contents || [];
+    const dmg = list.filter(isDamaged).length, anyWater = Object.keys((c.sketch && c.sketch.water) || {}).length;
+    $('#ctNote').innerHTML = `${list.length} line${list.length === 1 ? '' : 's'}, ${dmg} marked damaged. Items found by the LiDAR scan are added by room.
+      ${anyWater ? 'Items sitting below the interior water line are marked damaged; change any of them.' : 'Set the <b>interior water line</b> on the Sketch screen and items below it are marked damaged.'}
+      Coverage is a starting guess.`;
+    const lvRank = l => { const i = LEVELS.indexOf(l); return i < 0 ? 99 : i; };
+    const rows = [...list].sort((a, b) => lvRank(a.level) - lvRank(b.level) || String(a.room || '~').localeCompare(String(b.room || '~')));
+    $('#ctBody').innerHTML = !rows.length ? '<p class="muted">No contents yet. Scan rooms on the iPad, or add items here.</p>' : `<table><thead><tr><th>Room</th><th>Item</th><th>Qty</th><th>Coverage</th><th>Damaged</th><th>Notes</th><th></th></tr></thead><tbody>
+      ${rows.map(x => `<tr data-cid="${esc(x.id)}">
+        <td><input type="text" data-cf="room" value="${esc(x.room || '')}" placeholder="Room"><div class="muted" style="font-size:11px">${esc(x.level || '')}</div></td>
+        <td><input type="text" data-cf="item" value="${esc(x.item || '')}" placeholder="Item">${x.source === 'scan' ? '<div class="muted" style="font-size:11px">from scan</div>' : ''}</td>
+        <td><input type="number" min="0" data-cf="qty" value="${esc(String(x.qty ?? 1))}"></td>
+        <td><select data-cf="coverage">${['Contents', 'Building', 'Check'].map(o => `<option ${o === x.coverage ? 'selected' : ''}>${o}</option>`).join('')}</select></td>
+        <td style="text-align:center"><input type="checkbox" data-cf="damaged" ${isDamaged(x) ? 'checked' : ''}>${x.below ? '<div class="ct-below">below water line</div>' : ''}</td>
+        <td><input type="text" data-cf="notes" value="${esc(x.notes || '')}" placeholder="Brand, age, condition"></td>
+        <td><button type="button" class="btn icon small" data-cdel title="Remove">✕</button></td></tr>`).join('')}</tbody></table>`;
+    $('#ctCsv').disabled = !rows.length;
+  }
+  $('#ctBody').addEventListener('change', e => {
+    const tr = e.target.closest('[data-cid]'), f = e.target.dataset.cf; if (!tr || !f) return;
+    const c = claim(), x = (c.contents || []).find(y => y.id === tr.dataset.cid); if (!x) return;
+    if (f === 'damaged') x.damaged = e.target.checked;
+    else if (f === 'qty') { x.qty = Math.max(0, parseInt(e.target.value, 10) || 0); x.qtyEdited = true; }
+    else { x[f] = e.target.value.trim(); if (f === 'room' || f === 'item') x.edited = true; }
+    save(); renderContents();
+  });
+  $('#ctBody').addEventListener('click', e => {
+    const tr = e.target.closest('[data-cid]'); if (!tr || !e.target.closest('[data-cdel]')) return;
+    const c = claim(), x = (c.contents || []).find(y => y.id === tr.dataset.cid); if (!x) return;
+    if (x.source === 'scan' && !confirm(`Remove "${x.item}"? (To keep it off for good, remove the item on the Sketch screen with ✏️ Edit rooms; otherwise the next scan adds it back.)`)) return;
+    c.contents = c.contents.filter(y => y !== x); save(); renderContents();
+  });
+  $('#ctAdd').addEventListener('click', () => {
+    const c = claim(); c.contents = c.contents || [];
+    const last = c.contents[c.contents.length - 1];
+    c.contents.push({ id: 'i' + Math.random().toString(36).slice(2, 9), source: 'manual', room: last ? last.room : '', level: last ? last.level : '', item: '', qty: 1, coverage: 'Contents', damaged: true, below: false, notes: '' });
+    save(); renderContents();
+    const inp = $('#ctBody').querySelector(`[data-cid="${c.contents[c.contents.length - 1].id}"] [data-cf="item"]`); if (inp) inp.focus();
+  });
+  $('#ctSketch').addEventListener('click', () => { cdlg.close(); open(claimId); });
+  $('#ctCsv').addEventListener('click', () => {
+    const c = claim(), q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = [['Level', 'Room', 'Item', 'Qty', 'Coverage', 'Damaged', 'Below water line', 'Notes', 'Source'].join(',')]
+      .concat((c.contents || []).map(x => [x.level, x.room, x.item, x.qty, x.coverage, isDamaged(x) ? 'Yes' : 'No', x.below ? 'Yes' : '', x.notes, x.source === 'scan' ? 'LiDAR scan' : 'Added'].map(q).join(',')));
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' }), name = `${(c.insured || 'Claim').replace(/[\\/:*?"<>|]/g, ' ')} contents.csv`;
+    if (IOS) {
+      const r = new FileReader(); r.onload = () => N('saveFile', { name, mime: 'text/csv', data: String(r.result).split(',')[1] }).catch(() => { }); r.readAsDataURL(blob);
+    } else { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000); }
+  });
+  function openContents(id) {
+    claimId = id; const c = claim(); if (!c) return;
+    $('#ctWho').textContent = [c.insured, c.claimNo && '#' + c.claimNo].filter(Boolean).join(' · ');
+    if (rooms(c).length) { syncContents(c); save(); }
+    renderContents(); if (!cdlg.open) cdlg.showModal();
+  }
+
+  window.contents = { open: openContents, count: c => ((c && c.contents) || []).length };
+  window.sketch = { open, syncContents, ITEM, geom, count: c => ((c && c.sketch && c.sketch.rooms) || []).length, metrics, layout, roomListText };
 })();
 </script>
 <script>

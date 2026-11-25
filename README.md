@@ -177,7 +177,17 @@ The iPad app (`ios-app/`) is the same tracker, plus Apple's room scanner (RoomPl
    floor perimeter LF, ceiling height, and door and window counts per room.
 4. **✥ Move rooms**: drag a room into place (it snaps against nearby walls); tap a room to turn it 90° or 2°.
    Rooms that landed on top of each other are set side by side automatically until you place them.
-5. **📄 Floor plan (PDF)**: one page per level. **🧊 3D model**: a USDZ file of the rooms scanned since the app was
+5. **✏️ Edit rooms**: tap a room, then drag its orange corners (they line up with the next corner to keep walls
+   square), tap a wall length to type it (e.g. `12' 6"`; the room stretches and stays square), set the ceiling
+   height, add a door, window or opening by tapping a wall, and tap a door, window or item to remove it.
+   **↶ Undo** steps back; **Back to the scan** throws the edits away.
+6. **Interior water line** (per level, in inches): items the scanner found that sit below it are marked damaged
+   on the contents list.
+7. **📦 Contents** (Report tab): one line per kind of item per room from the scan (bed, sofa, chair, table, TV,
+   washer/dryer, storage furniture, refrigerator, range, oven, dishwasher), with quantity, coverage (a starting
+   guess), damaged, and notes. Add anything else by hand; **⬇ Contents list (CSV)** exports it. Your changes are
+   kept when rooms are rescanned or edited.
+8. **📄 Floor plan (PDF)**: one page per level. **🧊 3D model**: a USDZ file of the rooms scanned since the app was
    opened. **Use these rooms for photo labeling**: fills in the room list the photo labeler uses (done
    automatically until you type your own list).
 
