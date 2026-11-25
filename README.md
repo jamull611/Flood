@@ -130,8 +130,9 @@ On a claim, open **Report → Photos**:
    contents and data plates kept in their room.
 3. Check the captions, fix anything, and move photos with ↑ ↓ if needed. Under **Rooms from your sketch**, list the
    claim's levels and rooms (e.g. `Main Level: Living Room, Kitchen, Front Bedroom`) before labeling and the AI uses
-   only those names. After labeling, each room's general captions are combined into one caption listing everything
-   damaged in that room, the way adjusters write them.
+   only those names. After labeling, every inside photo's caption starts with the
+   same room header ("Showing damages to the kitchen.") followed by what that photo shows. **✨ Tidy captions** fixes
+   the headers again at any time, for free.
 4. **⬇ Photos (.zip)**: the original full-size photos renamed in order (`001 Front elevation.jpg`, …) plus
    `captions.csv`. Good for importing into Xactimate. **📄 Photo sheet (PDF)**: the AdStrat-style photo sheet:
    header with your firm, insured, claim # and policy #; two photos per page, each with

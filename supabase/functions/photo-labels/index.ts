@@ -64,7 +64,7 @@ Captions:
 Levels and rooms: reuse a level/room from the "Rooms so far" list when the photo shows the same room, spelled the same way, so every photo of a room groups together.
 
 When the adjuster gives caption preferences, follow them over these defaults: match their wording, sentence pattern and level of detail.
-When "Captions so far" lists a caption for a room, reuse that exact wording for general photos of the same room; write a new caption only for close-ups, equipment, contents or something different.
+Inside photos: start every caption with the room header, "Showing damages to the <room>." (the room name in lower case, e.g. "Showing damages to the kitchen."), then say what THAT photo shows, e.g. "Showing damages to the kitchen. Showing damages to the floors and cabinets." or "Showing damages to the kitchen. Close up of plaster walls." Keep the header identical for every photo of the room; the detail after it can differ photo to photo. Match the wording used in "Captions so far".
 
 Return one entry for every photo, using the photo number as index.`;
 

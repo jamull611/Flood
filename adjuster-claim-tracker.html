@@ -2620,7 +2620,7 @@ $('#textCopy').addEventListener('click', async () => {
 // ---------- settings ----------
 ['sheetFirm', 'sheetAddress'].forEach(id => $('#' + id).addEventListener('input', e => { S()[id] = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); }));
 // Version: bump together with CACHE in sw.js on every release.
-const APP_VERSION = 27;
+const APP_VERSION = 28;
 $('#appVersion').textContent = APP_VERSION;
 $('#photoStyle').addEventListener('input', e => { S().photoStyle = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); });
 function renderSettings() {
@@ -4199,26 +4199,22 @@ window.TRACKER_CONFIG = {
     });
   }
 
-  // One caption per room, like the adjuster writes it: every general "Showing damages to the <room>. Showing
-  // damages to the <items>." caption in a room gets the combined list of everything damaged in that room.
-  // Captions you edited, and close-ups, equipment, water lines and contents, are left alone.
-  const GENERAL = /^Showing damages? to (?:the )?(.+?)\.\s+Showing damages? to (?:the )?(.+?)\.?$/i;
-  const splitList = t => t.split(/,\s*|\s+and\s+/i).map(x => x.replace(/^and\s+/i, '').trim()).filter(Boolean);
-  const joinList = a => a.length <= 2 ? a.join(' and ') : a.slice(0, -1).join(', ') + ', and ' + a[a.length - 1];
+  // Room headers: every inside photo's caption starts with the same first sentence for its room,
+  // "Showing damages to the kitchen.", followed by what that photo shows. The detail after the header
+  // is left as written, so each photo keeps its own description.
+  const HEADER = /^\s*Showing damages? to (?:the )?[^.]+\.\s*/i;
+  const roomHeader = l => `Showing damages to the ${String(l.room).trim().toLowerCase()}.`;
   function unifyRoomCaptions() {
-    const L = labels(), byRoom = {};
-    [...items].sort((a, b) => a.taken - b.taken).forEach(it => {
-      const l = L[it.key]; if (!l || !l.room || l.edited) return;
-      const m = GENERAL.exec(String(l.caption || '').trim()); if (!m) return;
-      const k = (levelOf(l) + '/' + l.room).toLowerCase();
-      (byRoom[k] = byRoom[k] || { name: m[1], items: [], labels: [] }).labels.push(l);
-      for (const x of splitList(m[2])) if (!byRoom[k].items.some(y => y.toLowerCase() === x.toLowerCase())) byRoom[k].items.push(x);
-    });
-    let changed = 0;
-    for (const g of Object.values(byRoom)) {
-      if (g.labels.length < 2) continue;
-      const cap = `Showing damages to the ${g.name}. Showing damages to the ${joinList(g.items)}.`;
-      for (const l of g.labels) if (l.caption !== cap) { l.caption = cap; changed++; }
+    const L = labels(); let changed = 0;
+    for (const it of items) {
+      const l = L[it.key];
+      if (!l || l.section !== 'interior' || !String(l.room || '').trim() || levelOf(l) === 'Exterior') continue;
+      const cap = String(l.caption || '').trim(), head = roomHeader(l);
+      let next;
+      if (HEADER.test(cap)) next = (head + ' ' + cap.replace(HEADER, '')).trim();
+      else if (l.edited) continue;   // a caption you rewrote without a header is left alone
+      else next = cap ? `${head} ${cap.charAt(0).toUpperCase()}${cap.slice(1)}` : head;
+      if (next !== l.caption) { l.caption = next; changed++; }
     }
     return changed;
   }
@@ -4265,7 +4261,7 @@ window.TRACKER_CONFIG = {
     clearTimeout(open.t); open.t = setTimeout(save, 600);
   });
   $('#phList').addEventListener('change', e => {
-    if (e.target.dataset.f === 'section') { save(); return; }
+    if (e.target.dataset.f === 'section') { if (unifyRoomCaptions()) render(); save(); return; }
     // Renaming a room on one photo: offer to rename it on every photo in that room (and in their captions).
     if (e.target.dataset.f === 'room') {
       const row = e.target.closest('[data-k]'), L = labels(), me = L[row.dataset.k];
@@ -4280,12 +4276,12 @@ window.TRACKER_CONFIG = {
       if (others.length && confirm(`Rename "${oldName}" to "${newName}" on all ${others.length + 1} photos in that room, including their captions?`)) {
         for (const it of others) { L[it.key].room = newName; fixCaption(L[it.key]); }
       }
-      save(); render();
+      unifyRoomCaptions(); save(); render();
     }
   });
   $('#phTidy').addEventListener('click', () => {
     const n = unifyRoomCaptions(); save(); sortItems(); render();
-    status(n ? `✓ Combined the general captions in each room: ${n} caption${n === 1 ? '' : 's'} updated to list everything damaged in that room. No AI used.` : 'Captions already match room by room. Nothing to change.');
+    status(n ? `✓ Room headers fixed on ${n} caption${n === 1 ? '' : 's'}: every inside photo now starts with "Showing damages to the &lt;room&gt;." The detail for each photo is unchanged. No AI used.` : 'Every inside photo already starts with its room header. Nothing to change.');
   });
   $('#phList').addEventListener('click', e => {
     const row = e.target.closest('[data-k]'); if (!row) return;
