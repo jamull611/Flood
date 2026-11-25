@@ -2628,7 +2628,7 @@ $('#textCopy').addEventListener('click', async () => {
 // ---------- settings ----------
 ['sheetFirm', 'sheetAddress'].forEach(id => $('#' + id).addEventListener('input', e => { S()[id] = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); }));
 // Version: bump together with CACHE in sw.js on every release.
-const APP_VERSION = 31;
+const APP_VERSION = 32;
 $('#appVersion').textContent = APP_VERSION;
 $('#photoStyle').addEventListener('input', e => { S().photoStyle = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); });
 function renderSettings() {
@@ -4592,7 +4592,22 @@ window.TRACKER_CONFIG = {
   });
 
   // ---------- entry point on the claim's Report tab ----------
-  window.photos = { open, count: c => Object.keys((c && c.photoLabels) || {}).length, unify: () => { const n = unifyRoomCaptions(); save(); render(); return n; } };
+  // Photos from another screen (the iPad room scanner): added to the claim's photos with labels already filled in.
+  async function importFor(id, files, labelFor) {
+    if (busy) throw new Error('Photos are being labeled right now. Try again in a moment.');
+    if (claimId !== id) {
+      claimId = id;
+      items = await loadKept(id);
+      const L0 = labels(); items.forEach(it => { it.status = L0[it.key] ? 'done' : 'new'; });
+    }
+    const L = labels();
+    files.forEach(f => { const k = keyOf(f); if (!L[k]) L[k] = labelFor(f); });
+    save();
+    await addFiles(files);
+    unifyRoomCaptions(); sortItems(); savePositions();
+    return files.length;
+  }
+  window.photos = { open, importFor, count: c => Object.keys((c && c.photoLabels) || {}).length, unify: () => { const n = unifyRoomCaptions(); save(); render(); return n; } };
 })();
 </script>
 <script>
@@ -4620,6 +4635,8 @@ window.TRACKER_CONFIG = {
   };
   const claim = () => claimById(claimId);
   const rooms = c => ((c.sketch = c.sketch || { rooms: [] }).rooms = c.sketch.rooms || []);
+  const opt = k => { try { return localStorage.getItem('adjusterClaimTracker.scan.' + k) === '1'; } catch { return false; } };
+  const setOpt = (k, v) => { try { localStorage.setItem('adjusterClaimTracker.scan.' + k, v ? '1' : '0'); } catch { } };
   const lastLevel = () => { try { return localStorage.getItem('adjusterClaimTracker.scanLevel') || 'Main Level'; } catch { return 'Main Level'; } };
 
   // ---------- geometry ----------
@@ -4812,7 +4829,10 @@ window.TRACKER_CONFIG = {
       ? `<div class="box" style="margin-bottom:10px"><div class="row" style="margin:0;gap:8px;flex-wrap:wrap;align-items:center">
           <label class="small">Level <select id="skLevel">${[...new Set([...LEVELS, ...list.map(r => r.level)])].map(l => `<option ${l === lastLevel() ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
           <button type="button" class="btn primary" id="skScan" ${scanning ? 'disabled' : ''}>＋ Scan a room</button></div>
-          <div class="small muted" style="margin-top:6px">Stand in the doorway, tap Scan, and slowly walk the room pointing the iPad at the walls. Tap Done, then Save room. Scan the rooms one after another without closing the app and they line up on the plan.</div></div>`
+          <div class="row" style="margin:8px 0 0;gap:14px;flex-wrap:wrap">
+            <label class="small"><input type="checkbox" id="skAutoPh" ${opt('autoPhotos') ? 'checked' : ''}> 📷 Take photos automatically while scanning</label>
+            <label class="small"><input type="checkbox" id="skRec" ${opt('record') ? 'checked' : ''}> 🎥 Record a video of the scan (saved to the Photos app)</label></div>
+          <div class="small muted" style="margin-top:6px">Stand in the doorway, tap Scan, and slowly walk the room pointing the iPad at the walls. Tap Done, then Save room. Scan the rooms one after another without closing the app and they line up on the plan. Tap the white 📷 button any time to take a photo; photos go to this claim's Photos, labeled with the room.</div></div>`
       : `<div class="small muted" style="margin-bottom:10px">${IOS ? 'This iPad has no LiDAR scanner, so it can\'t scan rooms. Scans made on a LiDAR iPad show up here.' : 'Rooms are scanned with the Claim Tracker app on your LiDAR iPad. Scans sync here, where you can see the floor plan and print it.'}</div>`;
     $('#skPdf').disabled = $('#skRooms').disabled = $('#skMove').disabled = $('#skEdit').disabled = !list.length;
     if (!list.length) arrange = editing = false;
@@ -4848,6 +4868,34 @@ window.TRACKER_CONFIG = {
     }).join('');
   }
 
+  // Photos from the scan: collected from the app one at a time, then added to the claim's Photos page,
+  // labeled with the level and room (caption starts with the room header for you to finish).
+  async function importScanPhotos(id, list, level, roomName, room) {
+    if (!list || !list.length || !window.photos || !window.photos.importFor) return 0;
+    const files = [];
+    const stamp = new Date().toISOString().slice(0, 10);
+    for (const [i, p] of list.entries()) {
+      status(`Collecting scan photo ${i + 1} of ${list.length}…`);
+      try {
+        const { data } = await N('takeScanPhoto', { id: p.id });
+        const bin = atob(data), u8 = new Uint8Array(bin.length); for (let j = 0; j < bin.length; j++) u8[j] = bin.charCodeAt(j);
+        const nm = `Scan ${stamp} ${level} ${roomName} ${String(i + 1).padStart(2, '0')}.jpg`.replace(/[\\/:*?"<>|]/g, ' ');
+        files.push(new File([u8], nm, { type: 'image/jpeg', lastModified: Math.round(p.taken) || Date.now() }));
+      } catch (e) { console.warn('scan photo', e); }
+    }
+    if (!files.length) return 0;
+    const header = roomName && roomName !== 'Room' ? `Showing damages to the ${roomName.toLowerCase()}.` : '';
+    try {
+      await window.photos.importFor(id, files, f => ({ section: 'interior', level, room: roomName === 'Room' ? '' : roomName, overview: false, title: `${roomName} scan photo`, caption: header }));
+    } catch (e) { status(`<span class="stale-warn">${esc(e.message)}</span>`); return 0; }
+    if (room) { room.photoKeys = files.map(f => `${f.name}|${f.size}|${f.lastModified}`); save(); }
+    return files.length;
+  }
+  dlg.addEventListener('change', e => {
+    if (e.target.id === 'skAutoPh') setOpt('autoPhotos', e.target.checked);
+    if (e.target.id === 'skRec') setOpt('record', e.target.checked);
+  });
+
   const LABELS = { kitchen: 'Kitchen', bathroom: 'Bathroom', bedroom: 'Bedroom', livingRoom: 'Living Room', diningRoom: 'Dining Room' };
   function nameFor(c, room, level) {
     const lab = (room.sections || []).map(s => LABELS[s.label]).find(Boolean) || 'Room';
@@ -4861,13 +4909,23 @@ window.TRACKER_CONFIG = {
     const level = $('#skLevel').value; try { localStorage.setItem('adjusterClaimTracker.scanLevel', level); } catch { }
     scanning = true; render(); status('Scanning…');
     try {
-      const res = await N('scanRoom', { title: `${level}: room ${rooms(c).filter(r => r.level === level).length + 1}` });
+      const res = await N('scanRoom', { title: `${level}: room ${rooms(c).filter(r => r.level === level).length + 1}`, autoPhotos: opt('autoPhotos'), record: opt('record') });
+      if (!res.room) {
+        const n = await importScanPhotos(claimId, res.photos, level, 'Room');
+        status(`Scan cancelled.${n ? ` ${n} photo${n === 1 ? '' : 's'} taken during it ${n === 1 ? 'was' : 'were'} added to Photos (room not set).` : ''}`);
+        return;
+      }
       const r = res.room, c2 = claimById(claimId);
       const room = { id: 'r' + Date.now().toString(36), name: nameFor(c2, r, level), level, session: r.session, scannedAt: new Date().toISOString(),
         walls: r.walls, doors: r.doors, windows: r.windows, openings: r.openings, objects: r.objects, floors: r.floors, floorY: r.floorY };
       rooms(c2).push(room); syncRoomList(c2); syncContents(c2); save();
       const m = metrics(room);
-      status(`✓ Saved <b>${esc(room.name)}</b>: ${n0(m.floor)} SF floor, ${room.walls.length} walls, ${m.doors} doors, ${m.windows} windows. Rename it below if needed.`);
+      const saved = `✓ Saved <b>${esc(room.name)}</b>: ${n0(m.floor)} SF floor, ${room.walls.length} walls, ${m.doors} doors, ${m.windows} windows. Rename it below if needed.`;
+      status(saved);
+      room.photoKeys = [];
+      const nPh = await importScanPhotos(claimId, res.photos, level, room.name, room);
+      const vid = res.video === 'saved' ? ' 🎥 Video saved to the Photos app.' : res.video ? ` <span class="stale-warn">${esc(res.video)}</span>` : '';
+      status(saved + (nPh ? ` 📷 ${nPh} photo${nPh === 1 ? '' : 's'} added to Photos.` : '') + vid);
       render();
       const inp = dlg.querySelector(`[data-id="${room.id}"] [data-f="name"]`); if (inp) { inp.focus(); inp.select(); }
     } catch (e) {
@@ -4888,7 +4946,15 @@ window.TRACKER_CONFIG = {
   dlg.addEventListener('change', e => {
     const row = e.target.closest('[data-id]'), f = e.target.dataset.f; if (!row || !f) return;
     const c = claim(), r = rooms(c).find(x => x.id === row.dataset.id); if (!r) return;
-    r[f] = e.target.value.trim(); syncRoomList(c); syncContents(c); save(); render();
+    const old = { name: r.name, level: r.level };
+    r[f] = e.target.value.trim();
+    // photos taken during this room's scan follow the new name or level
+    const L = c.photoLabels || {};
+    for (const k of r.photoKeys || []) if (L[k] && !L[k].edited) {
+      if (f === 'name' && L[k].room === old.name) { L[k].room = r.name; L[k].caption = String(L[k].caption || '').replace(/^Showing damages? to (?:the )?[^.]+\./i, `Showing damages to the ${r.name.toLowerCase()}.`); }
+      if (f === 'level' && L[k].level === old.level) L[k].level = r.level;
+    }
+    syncRoomList(c); syncContents(c); save(); render();
   });
   // ---------- moving rooms by hand ----------
   const levelRooms = lvl => rooms(claim()).filter(r => (r.level || 'Main Level') === lvl);

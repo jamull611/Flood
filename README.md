@@ -171,6 +171,10 @@ The iPad app (`ios-app/`) is the same tracker, plus Apple's room scanner (RoomPl
 
 1. Pick the level, tap **＋ Scan a room**, and walk the room pointing the iPad at the walls. Tap **Done**, then
    **Save room**. Scan the next room without closing the app, and the rooms line up on the plan.
+   Tap the white **📷** button during a scan to take a photo, or tick **Take photos automatically while scanning**
+   (a photo each time you move about a meter or turn, up to 40 per room). The photos are added to the claim's
+   **Photos** page labeled with the level and room, caption starting "Showing damages to the <room>." Tick
+   **Record a video of the scan** to save a video of each room's scan to the iPad's Photos app.
 2. Each room is saved on the claim and synced: walls, doors, windows, openings and fixtures, named from what the
    scanner recognized (Kitchen, Bathroom…). Rename a room or change its level in the list.
 3. The screen shows the floor plan for each level with wall lengths, plus floor SF, wall SF (gross), ceiling SF,

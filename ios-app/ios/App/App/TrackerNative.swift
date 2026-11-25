@@ -6,6 +6,9 @@ import UIKit
 import Capacitor
 import ARKit
 import RoomPlan
+import ReplayKit
+import Photos
+import CoreImage
 
 /// The app's main screen: the tracker web page, with the TrackerNative plugin added.
 class MainViewController: CAPBridgeViewController {
@@ -24,7 +27,10 @@ public class TrackerNativePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "export3D", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "resetScan", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "takeScanPhoto", returnType: CAPPluginReturnPromise),
     ]
+    // Photos taken during scans, waiting for the page to collect them (one at a time keeps memory low).
+    private var scanPhotos: [String: Data] = [:]
 
     // Rooms scanned one after another share one AR session, so they come out in the same
     // coordinates and line up on the floor plan. A new session starts after resetScan or a restart.
@@ -49,6 +55,8 @@ public class TrackerNativePlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
         let title = call.getString("title") ?? "Scan a room"
+        let autoPhotos = call.getBool("autoPhotos") ?? false
+        let record = call.getBool("record") ?? false
         DispatchQueue.main.async {
             // One scanner screen (and one AR session) is kept for the whole visit: starting a fresh scanner
             // for each room restarts tracking, and the rooms then land on top of each other.
@@ -59,14 +67,25 @@ public class TrackerNativePlugin: CAPPlugin, CAPBridgedPlugin {
                 self.scanner = vc
             }
             let vc = self.scanner!
-            vc.prepare(title: title)
+            vc.prepare(title: title, autoPhotos: autoPhotos, record: record)
             vc.onFinish = { room, error in
+                var photos: [[String: Any]] = []
+                for p in vc.photos {
+                    let id = UUID().uuidString
+                    self.scanPhotos[id] = p.data
+                    photos.append(["id": id, "taken": p.taken.timeIntervalSince1970 * 1000, "w": p.w, "h": p.h])
+                }
+                vc.photos = []
+                let video = vc.videoStatus ?? ""
                 if let room = room {
                     self.rooms.append(room)
                     var out = RoomExport.room(room)
                     out["session"] = self.sessionId
                     out["index"] = self.rooms.count - 1
-                    call.resolve(["room": out])
+                    call.resolve(["room": out, "photos": photos, "video": video])
+                } else if !photos.isEmpty {
+                    // Cancelled, but keep the photos that were taken.
+                    call.resolve(["photos": photos, "video": video, "cancelled": true, "error": error?.localizedDescription ?? ""])
                 } else if let error = error {
                     call.reject(error.localizedDescription, "scan")
                 } else {
@@ -107,6 +126,11 @@ public class TrackerNativePlugin: CAPPlugin, CAPBridgedPlugin {
             self.rooms = []
             call.resolve()
         }
+    }
+
+    @objc func takeScanPhoto(_ call: CAPPluginCall) {
+        guard let id = call.getString("id"), let data = scanPhotos.removeValue(forKey: id) else { call.reject("Photo not found", "missing"); return }
+        call.resolve(["data": data.base64EncodedString()])
     }
 
     @objc func saveFile(_ call: CAPPluginCall) {
@@ -155,6 +179,21 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate {
     private let doneButton = UIButton(type: .system)
     private let cancelButton = UIButton(type: .system)
     private let titleLabel = UILabel()
+    private let shutterButton = UIButton(type: .system)
+    private let countLabel = UILabel()
+    private let flash = UIView()
+
+    // Photos taken during this room's scan (shutter button, or automatically as you move around).
+    struct ScanPhoto { let data: Data; let taken: Date; let w: Int; let h: Int }
+    var photos: [ScanPhoto] = []
+    var videoStatus: String?
+    private var autoPhotos = false
+    private var record = false
+    private var recording = false
+    private var autoTimer: Timer?
+    private var lastShot: (pos: simd_float3, dir: simd_float3, at: Date)?
+    private let ci = CIContext()
+    private let maxAuto = 40
 
     init(arSession: ARSession) {
         self.arSession = arSession
@@ -162,11 +201,17 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate {
     }
 
     /// Ready for the next room (the same capture view and AR session are reused).
-    func prepare(title: String) {
+    func prepare(title: String, autoPhotos: Bool, record: Bool) {
         titleText = title
         result = nil
         scanning = false
         finished = false
+        photos = []
+        videoStatus = nil
+        lastShot = nil
+        self.autoPhotos = autoPhotos
+        self.record = record
+        if isViewLoaded { countLabel.text = "" }
         if isViewLoaded {
             titleLabel.text = title
             doneButton.configuration?.title = "Done"
@@ -190,8 +235,25 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate {
         style(doneButton, "Done", filled: true)
         style(cancelButton, "Cancel", filled: false)
         doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
+        var sc = UIButton.Configuration.filled()
+        sc.image = UIImage(systemName: "camera.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 26, weight: .semibold))
+        sc.cornerStyle = .capsule
+        sc.baseBackgroundColor = .white
+        sc.baseForegroundColor = .black
+        sc.contentInsets = NSDirectionalEdgeInsets(top: 18, leading: 18, bottom: 18, trailing: 18)
+        shutterButton.configuration = sc
+        shutterButton.addTarget(self, action: #selector(shutterTapped), for: .touchUpInside)
+        countLabel.textColor = .white
+        countLabel.font = .boldSystemFont(ofSize: 15)
+        countLabel.textAlignment = .center
+        flash.backgroundColor = .white
+        flash.alpha = 0
+        flash.isUserInteractionEnabled = false
+        flash.frame = view.bounds
+        flash.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         cancelButton.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
-        for v in [titleLabel, doneButton, cancelButton] as [UIView] { v.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(v) }
+        for v in [titleLabel, doneButton, cancelButton, shutterButton, countLabel] as [UIView] { v.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(v) }
+        view.addSubview(flash)
         let g = view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
             cancelButton.leadingAnchor.constraint(equalTo: g.leadingAnchor, constant: 16),
@@ -200,6 +262,10 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate {
             doneButton.topAnchor.constraint(equalTo: g.topAnchor, constant: 12),
             titleLabel.centerXAnchor.constraint(equalTo: g.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: doneButton.centerYAnchor),
+            shutterButton.centerXAnchor.constraint(equalTo: g.centerXAnchor),
+            shutterButton.bottomAnchor.constraint(equalTo: g.bottomAnchor, constant: -24),
+            countLabel.centerXAnchor.constraint(equalTo: g.centerXAnchor),
+            countLabel.bottomAnchor.constraint(equalTo: shutterButton.topAnchor, constant: -8),
         ])
     }
 
@@ -215,9 +281,16 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate {
         super.viewDidAppear(animated)
         guard !scanning && !finished && result == nil else { return }
         titleLabel.text = titleText
+        countLabel.text = ""
+        shutterButton.isHidden = false
         scanning = true
         UIApplication.shared.isIdleTimerDisabled = true
         captureView.captureSession.run(configuration: RoomCaptureSession.Configuration())
+        if autoPhotos {
+            autoTimer?.invalidate()
+            autoTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.autoShot() }
+        }
+        if record { startRecording() }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -228,6 +301,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate {
     @objc private func doneTapped() {
         if scanning {
             scanning = false
+            autoTimer?.invalidate()
+            shutterButton.isHidden = true
             // Keep the AR session running so the next room lines up with this one.
             captureView.captureSession.stop(pauseARSession: false)
             doneButton.configuration?.title = "Finishing…"
@@ -238,6 +313,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate {
     }
 
     @objc private func cancelTapped() {
+        autoTimer?.invalidate()
         if scanning { scanning = false; captureView.captureSession.stop(pauseARSession: false) }
         finish(nil, nil)
     }
@@ -245,7 +321,100 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate {
     private func finish(_ room: CapturedRoom?, _ error: Error?) {
         guard !finished else { return }
         finished = true
-        dismiss(animated: true) { self.onFinish?(room, error) }
+        autoTimer?.invalidate()
+        let close = { self.dismiss(animated: true) { self.onFinish?(room, error) } }
+        if recording { stopRecording(then: close) } else { close() }
+    }
+
+    // MARK: photos from the scanner's own camera feed
+
+    @objc private func shutterTapped() {
+        guard scanning else { return }
+        takePhoto(auto: false)
+    }
+
+    /// Takes a photo when you've moved about a meter or turned about 35° since the last one.
+    private func autoShot() {
+        guard scanning, let frame = arSession.currentFrame, case .normal = frame.camera.trackingState else { return }
+        let autoCount = photos.count
+        guard autoCount < maxAuto else { return }
+        let t = frame.camera.transform
+        let pos = simd_float3(t.columns.3.x, t.columns.3.y, t.columns.3.z)
+        let dir = -simd_normalize(simd_float3(t.columns.2.x, t.columns.2.y, t.columns.2.z))
+        if let last = lastShot {
+            let moved = simd_distance(pos, last.pos), turned = acos(max(-1, min(1, simd_dot(dir, last.dir))))
+            if Date().timeIntervalSince(last.at) < 2 || (moved < 1.0 && turned < 0.6) { return }
+        }
+        takePhoto(auto: true)
+    }
+
+    private func takePhoto(auto: Bool) {
+        guard let frame = arSession.currentFrame else { return }
+        let t = frame.camera.transform
+        lastShot = (simd_float3(t.columns.3.x, t.columns.3.y, t.columns.3.z), -simd_normalize(simd_float3(t.columns.2.x, t.columns.2.y, t.columns.2.z)), Date())
+        let orientation: CGImagePropertyOrientation
+        switch view.window?.windowScene?.interfaceOrientation ?? .portrait {
+        case .landscapeLeft: orientation = .down
+        case .landscapeRight: orientation = .up
+        case .portraitUpsideDown: orientation = .left
+        default: orientation = .right
+        }
+        let buffer = frame.capturedImage
+        if !auto {
+            flash.alpha = 0.8
+            UIView.animate(withDuration: 0.25) { self.flash.alpha = 0 }
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            var img = CIImage(cvPixelBuffer: buffer).oriented(orientation)
+            let longSide = max(img.extent.width, img.extent.height), scale = min(1, 1600 / longSide)
+            if scale < 1 { img = img.transformed(by: CGAffineTransform(scaleX: scale, y: scale)) }
+            guard let cg = self.ci.createCGImage(img, from: img.extent),
+                  let data = UIImage(cgImage: cg).jpegData(compressionQuality: 0.8) else { return }
+            DispatchQueue.main.async {
+                self.photos.append(ScanPhoto(data: data, taken: Date(), w: cg.width, h: cg.height))
+                self.countLabel.text = "📷 \(self.photos.count)"
+            }
+        }
+    }
+
+    // MARK: video of the scan, saved to the Photos app
+
+    private func startRecording() {
+        let rec = RPScreenRecorder.shared()
+        guard rec.isAvailable, !rec.isRecording else { videoStatus = "Screen recording isn't available right now."; return }
+        rec.isMicrophoneEnabled = false
+        rec.startRecording { error in
+            DispatchQueue.main.async {
+                if let error = error { self.videoStatus = "Video not recorded: \(error.localizedDescription)" }
+                else { self.recording = true }
+            }
+        }
+    }
+
+    private func stopRecording(then done: @escaping () -> Void) {
+        recording = false
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("scan-\(UUID().uuidString).mp4")
+        RPScreenRecorder.shared().stopRecording(withOutput: url) { error in
+            if let error = error {
+                DispatchQueue.main.async { self.videoStatus = "Video not saved: \(error.localizedDescription)"; done() }
+                return
+            }
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+                guard status == .authorized || status == .limited else {
+                    DispatchQueue.main.async { self.videoStatus = "Video not saved: allow Claim Tracker to add to Photos in Settings."; done() }
+                    return
+                }
+                PHPhotoLibrary.shared().performChanges({
+                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+                }) { ok, err in
+                    try? FileManager.default.removeItem(at: url)
+                    DispatchQueue.main.async {
+                        self.videoStatus = ok ? "saved" : "Video not saved: \(err?.localizedDescription ?? "unknown error")"
+                        done()
+                    }
+                }
+            }
+        }
     }
 
     // RoomCaptureViewDelegate

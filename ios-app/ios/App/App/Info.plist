@@ -4,6 +4,8 @@
 <dict>
   <key>NSCameraUsageDescription</key>
 	<string>The camera and LiDAR scanner measure rooms for your floor plan.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Videos of your room scans are saved to Photos so you can watch them later.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>CAPACITOR_DEBUG</key>
