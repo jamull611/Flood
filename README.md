@@ -125,9 +125,13 @@ On a claim, open **Report → Photos**:
    with Google, tap **Open Google Photos**, select the claim's photos (up to 2,000) and tap Done. The originals
    are downloaded into the Photos page. The tracker can only see the photos you pick.
 2. **✨ Label with AI**: Claude (claude-opus-5-5) labels each photo with its report section, room and a
-   caption, and the photos are sorted into report order: address, front/risk, exterior elevations,
-   high-water marks, interior room by room (overview first), mechanical, contents, documents.
-3. Check the captions, fix anything, and move photos with ↑ ↓ if needed.
+   caption, and the photos are sorted into report order: address, exterior (overviews, elevations, water lines,
+   outdoor equipment), then each level and room in the order photographed (overview first), with equipment,
+   contents and data plates kept in their room.
+3. Check the captions, fix anything, and move photos with ↑ ↓ if needed. Under **Rooms from your sketch**, list the
+   claim's levels and rooms (e.g. `Main Level: Living Room, Kitchen, Front Bedroom`) before labeling and the AI uses
+   only those names. After labeling, each room's general captions are combined into one caption listing everything
+   damaged in that room, the way adjusters write them.
 4. **⬇ Photos (.zip)**: the original full-size photos renamed in order (`001 Front elevation.jpg`, …) plus
    `captions.csv`. Good for importing into Xactimate. **📄 Photo sheet (PDF)**: the AdStrat-style photo sheet:
    header with your firm, insured, claim # and policy #; two photos per page, each with

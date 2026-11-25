@@ -2620,7 +2620,7 @@ $('#textCopy').addEventListener('click', async () => {
 // ---------- settings ----------
 ['sheetFirm', 'sheetAddress'].forEach(id => $('#' + id).addEventListener('input', e => { S()[id] = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); }));
 // Version: bump together with CACHE in sw.js on every release.
-const APP_VERSION = 24;
+const APP_VERSION = 25;
 $('#appVersion').textContent = APP_VERSION;
 $('#photoStyle').addEventListener('input', e => { S().photoStyle = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); });
 function renderSettings() {
@@ -3931,9 +3931,12 @@ window.TRACKER_CONFIG = {
       <button type="button" class="btn small" id="phSort">↕ Put back in report order</button>
       <button type="button" class="btn small" id="phClear">🗑 Clear photos from this device</button>
     </div>
+    <details id="phRoomsBox" style="margin:4px 0 8px"><summary class="small" style="cursor:pointer"><b>Rooms from your sketch</b> <span class="muted" id="phRoomsNote">(optional: the AI uses only these names)</span></summary>
+      <textarea id="phRooms" rows="3" style="width:100%;box-sizing:border-box;margin-top:6px" placeholder="One level per line, e.g.&#10;Basement: Basement, Bathroom&#10;Main Level: Living Room, Kitchen, Front Bedroom, Middle Bedroom, Rear Bedroom, Bathroom, Hallway, Hallway Closet, Rear Foyer, Stairs, Garage"></textarea>
+    </details>
     <div class="small" id="phStatus" style="margin:4px 0 10px"></div>
     <div id="phList"></div>
-    <datalist id="phLevels"><option>Exterior</option><option>Main Level</option><option>Basement</option><option>Upper Level</option><option>Crawlspace</option><option>Garage</option><option>Attic</option></datalist>
+    <datalist id="phLevels"><option>Exterior</option><option>Main Level</option><option>Basement</option><option>Upper Level</option><option>Crawlspace</option><option>Attic</option></datalist>
   </div>
 </dialog>`);
   const pdlg = $('#photoDlg');
@@ -3942,6 +3945,8 @@ window.TRACKER_CONFIG = {
   $('#phClose').addEventListener('click', () => pdlg.close());
   $('#phGoogle').addEventListener('click', () => pickFromGoogle());
   $('#phClear').addEventListener('click', () => clearDevice());
+  $('#phRooms').addEventListener('input', e => { const c = claim(); if (!c) return; c.sketchRooms = e.target.value; roomsNote(); clearTimeout(open.r); open.r = setTimeout(save, 600); });
+  const roomsNote = () => { const c = claim(), n = String((c && c.sketchRooms) || '').split(/[,\n]/).filter(x => x.replace(/^[^:]*:/, '').trim()).length; $('#phRoomsNote').textContent = n ? `(${n} rooms: the AI uses only these names)` : '(optional: the AI uses only these names)'; };
 
   // ---------- photos kept on this device ----------
   // Each claim's photos are saved in this browser's own storage (IndexedDB), so they're still here after a
@@ -3986,6 +3991,7 @@ window.TRACKER_CONFIG = {
     claimId = id;
     const c = claim(); if (!c) return;
     $('#phWho').textContent = [c.insured, c.claimNo && '#' + c.claimNo].filter(Boolean).join(' · ');
+    $('#phRooms').value = c.sketchRooms || ''; roomsNote(); $('#phRoomsBox').open = !c.sketchRooms && !Object.keys(labels()).length;
     if (!pdlg.open) pdlg.showModal();
     render();
     if (switching) {
@@ -4159,21 +4165,59 @@ window.TRACKER_CONFIG = {
   });
 
   // ---------- ordering ----------
-  // Report order: section, then rooms in the order you first photographed them, overview shots first, then time taken.
+  // Report order like the adjuster's sheets: address, then the exterior (overviews, elevations, water lines,
+  // outdoor equipment), then each level in the order it was first photographed, room by room in the order
+  // photographed, overview shots first, then the rest by time taken. Equipment, contents and data plates
+  // stay with their room.
+  const EXT_RANK = { address: 0, risk: 1, exterior: 2, water_line: 3 };
   function sortItems() {
     const L = labels();
-    const roomFirst = {};
-    [...items].sort((a, b) => a.taken - b.taken).forEach(i => { const l = L[i.key]; if (l && l.room) { const r = l.room.toLowerCase(); if (!(r in roomFirst)) roomFirst[r] = i.taken; } });
+    const lvl = l => (levelOf(l) || '').toLowerCase(), roomKey = l => lvl(l) + '/' + String((l && l.room) || '').toLowerCase();
+    const isExt = l => !!l && (l.section === 'address' || lvl(l) === 'exterior');
+    const levelFirst = {}, roomFirst = {};
+    [...items].sort((a, b) => a.taken - b.taken).forEach(i => {
+      const l = L[i.key]; if (!l || isExt(l)) return;
+      if (!(lvl(l) in levelFirst)) levelFirst[lvl(l)] = i.taken;
+      if (!(roomKey(l) in roomFirst)) roomFirst[roomKey(l)] = i.taken;
+    });
+    const group = l => !l || !l.section ? 3 : l.section === 'address' ? 0 : isExt(l) ? 1 : 2;
     items.sort((a, b) => {
-      const la = L[a.key] || {}, lb = L[b.key] || {};
-      if (la.pos != null && lb.pos != null) return la.pos - lb.pos;
-      const sa = SECTION_RANK[la.section] ?? 99, sb = SECTION_RANK[lb.section] ?? 99;
-      if (sa !== sb) return sa - sb;
-      const ra = roomFirst[(la.room || '').toLowerCase()] ?? a.taken, rb = roomFirst[(lb.room || '').toLowerCase()] ?? b.taken;
-      if (ra !== rb) return ra - rb;
-      if (!!la.overview !== !!lb.overview) return la.overview ? -1 : 1;
+      const la = L[a.key], lb = L[b.key];
+      if (la && lb && la.pos != null && lb.pos != null) return la.pos - lb.pos;
+      const ga = group(la), gb = group(lb);
+      if (ga !== gb) return ga - gb;
+      if (ga === 1) { const ea = EXT_RANK[la.section] ?? 9, eb = EXT_RANK[lb.section] ?? 9; if (ea !== eb) return ea - eb; return a.taken - b.taken; }
+      if (ga === 2) {
+        const va = levelFirst[lvl(la)] ?? a.taken, vb = levelFirst[lvl(lb)] ?? b.taken; if (va !== vb) return va - vb;
+        const ra = roomFirst[roomKey(la)] ?? a.taken, rb = roomFirst[roomKey(lb)] ?? b.taken; if (ra !== rb) return ra - rb;
+        if (!!la.overview !== !!lb.overview) return la.overview ? -1 : 1;
+      }
       return a.taken - b.taken;
     });
+  }
+
+  // One caption per room, like the adjuster writes it: every general "Showing damages to the <room>. Showing
+  // damages to the <items>." caption in a room gets the combined list of everything damaged in that room.
+  // Captions you edited, and close-ups, equipment, water lines and contents, are left alone.
+  const GENERAL = /^Showing damages? to (?:the )?(.+?)\.\s+Showing damages? to (?:the )?(.+?)\.?$/i;
+  const splitList = t => t.split(/,\s*|\s+and\s+/i).map(x => x.replace(/^and\s+/i, '').trim()).filter(Boolean);
+  const joinList = a => a.length <= 2 ? a.join(' and ') : a.slice(0, -1).join(', ') + ', and ' + a[a.length - 1];
+  function unifyRoomCaptions() {
+    const L = labels(), byRoom = {};
+    [...items].sort((a, b) => a.taken - b.taken).forEach(it => {
+      const l = L[it.key]; if (!l || !l.room || l.edited) return;
+      const m = GENERAL.exec(String(l.caption || '').trim()); if (!m) return;
+      const k = (levelOf(l) + '/' + l.room).toLowerCase();
+      (byRoom[k] = byRoom[k] || { name: m[1], items: [], labels: [] }).labels.push(l);
+      for (const x of splitList(m[2])) if (!byRoom[k].items.some(y => y.toLowerCase() === x.toLowerCase())) byRoom[k].items.push(x);
+    });
+    let changed = 0;
+    for (const g of Object.values(byRoom)) {
+      if (g.labels.length < 2) continue;
+      const cap = `Showing damages to the ${g.name}. Showing damages to the ${joinList(g.items)}.`;
+      for (const l of g.labels) if (l.caption !== cap) { l.caption = cap; changed++; }
+    }
+    return changed;
   }
   function savePositions() {
     const L = labels();
@@ -4251,7 +4295,7 @@ window.TRACKER_CONFIG = {
     const c = claim();
     const body = {
       photos: batch.map((it, n) => ({ index: n + 1, data: it.small, taken: new Date(it.taken).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) })),
-      rooms, examples: roomExamples(), style: S().photoStyle || '', claim: { address: c.address || '', event: c.event || '' }
+      rooms, examples: roomExamples(), roomList: c.sketchRooms || '', style: S().photoStyle || '', claim: { address: c.address || '', event: c.event || '' }
     };
     for (let attempt = 0; ; attempt++) {
       let r, j = {};
@@ -4296,7 +4340,7 @@ window.TRACKER_CONFIG = {
       status(`Labeling… 0 of ${todo.length} photos`);
       for (const b of batches) await run(b);   // in order, so each batch reuses the rooms and captions before it
     } finally {
-      busy = false; sortItems(); savePositions(); render();
+      busy = false; unifyRoomCaptions(); sortItems(); savePositions(); render();
     }
     status(failed ? `<span class="stale-warn">Labeled ${todo.length - failed} of ${todo.length}. ${esc(firstError || 'Some photos failed.')}</span> Tap ✨ Label to try the rest again, or type captions yourself.`
       : `✓ Labeled ${todo.length} photos and sorted them into report order. Check the captions, fix anything that's off, then download.`);
@@ -4447,7 +4491,7 @@ window.TRACKER_CONFIG = {
   });
 
   // ---------- entry point on the claim's Report tab ----------
-  window.photos = { open, count: c => Object.keys((c && c.photoLabels) || {}).length };
+  window.photos = { open, count: c => Object.keys((c && c.photoLabels) || {}).length, unify: () => { const n = unifyRoomCaptions(); save(); render(); return n; } };
 })();
 </script>
 <script>

@@ -35,7 +35,7 @@ const SCHEMA = {
               'built-in appliances, ductwork. contents: personal property. documents: data plates, serial numbers, receipts, paperwork. ' +
               'other: anything else.',
           },
-          level: { type: 'string', description: 'Level, as in Xactimate: "Exterior" for anything outside, otherwise "Main Level", "Basement", "Upper Level", "Crawlspace", "Garage" or "Attic". Use the same spelling every time.' },
+          level: { type: 'string', description: 'Level, as in Xactimate: "Exterior" for anything outside, otherwise "Main Level", "Basement", "Upper Level", "Crawlspace" or "Attic". A garage is a room on its level (e.g. Main Level / Garage), not a level. Use the same spelling every time.' },
           room: { type: 'string', description: 'Room or area name, e.g. "Kitchen", "Primary Bedroom", "Rear Elevation". Use the level name again when the whole level is one space, e.g. an unfinished "Basement". Empty string if none applies.' },
           overview: { type: 'boolean', description: 'True if this is a wide shot showing the whole room or elevation, rather than a detail.' },
           title: { type: 'string', description: 'Short title for a file name, 2 to 6 words, e.g. "Kitchen base cabinets".' },
@@ -81,7 +81,7 @@ const anthropic = new Anthropic({ maxRetries: 0 });
 const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 
 type PhotoIn = { index: number; data: string; name?: string; taken?: string };
-type Body = { photos: PhotoIn[]; rooms?: string[]; examples?: string[]; style?: string; claim?: { address?: string; event?: string } };
+type Body = { photos: PhotoIn[]; rooms?: string[]; examples?: string[]; roomList?: string; style?: string; claim?: { address?: string; event?: string } };
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -111,6 +111,7 @@ Deno.serve(async (req) => {
   const notes = [
     body.claim?.event ? `Loss: ${body.claim.event} flood.` : '',
     body.claim?.address ? `Property: ${body.claim.address}.` : '',
+    body.roomList?.trim() ? `The rooms in this building (from the adjuster's sketch). For inside photos, use ONLY these level and room names, exactly as written, and pick the room the photo was most likely taken in, judging also by the photos taken just before and after it:\n${body.roomList.trim().slice(0, 2000)}` : '',
     `Rooms so far: ${rooms.length ? rooms.join('; ') : '(none yet)'}`,
     examples.length ? `Captions so far:\n${examples.join('\n')}` : '',
     body.style?.trim() ? `The adjuster's caption preferences:\n${body.style.trim().slice(0, 2000)}` : '',
