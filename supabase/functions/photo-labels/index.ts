@@ -14,7 +14,7 @@ const MAX_PHOTOS = 10;
 const MAX_PHOTO_BYTES = 1_500_000; // per photo, after the app shrinks it
 
 // Report order. The app sorts photos by this list, then by room, then by when they were taken.
-const SECTIONS = ['risk', 'address', 'exterior', 'water_line', 'interior', 'mechanical', 'contents', 'documents', 'other'] as const;
+const SECTIONS = ['address', 'risk', 'exterior', 'water_line', 'interior', 'mechanical', 'contents', 'documents', 'other'] as const;
 
 const SCHEMA = {
   type: 'object',

@@ -125,7 +125,7 @@ On a claim, open **Report → Photos**:
    with Google, tap **Open Google Photos**, select the claim's photos (up to 2,000) and tap Done. The originals
    are downloaded into the Photos page. The tracker can only see the photos you pick.
 2. **✨ Label with AI**: Claude (claude-opus-5-5) labels each photo with its report section, room and a
-   caption, and the photos are sorted into report order: front/risk, address, exterior elevations,
+   caption, and the photos are sorted into report order: address, front/risk, exterior elevations,
    high-water marks, interior room by room (overview first), mechanical, contents, documents.
 3. Check the captions, fix anything, and move photos with ↑ ↓ if needed.
 4. **⬇ Photos (.zip)**: the original full-size photos renamed in order (`001 Front elevation.jpg`, …) plus

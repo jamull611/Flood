@@ -2987,10 +2987,14 @@ window.TRACKER_CONFIG = {
     h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
     return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
   };
-  const claimHash = c => hash(JSON.stringify(c));
-  const settingsHash = () => hash(JSON.stringify([state.settings, state.lastPlan]));
+  // Compare by content, not field order: the cloud database hands fields back in its own order.
+  const sortKeys = v => Array.isArray(v) ? v.map(sortKeys) : v && typeof v === 'object' ? Object.keys(v).sort().reduce((o, k) => (o[k] = sortKeys(v[k]), o), {}) : v;
+  const stable = v => JSON.stringify(sortKeys(v));
+  const claimHash = c => hash(stable(c));
+  const settingsHash = () => hash(stable([state.settings, state.lastPlan]));
+  const oldClaimHash = c => hash(JSON.stringify(c)), oldSettingsHash = () => hash(JSON.stringify([state.settings, state.lastPlan]));
   const copy = v => v === undefined ? undefined : JSON.parse(JSON.stringify(v));
-  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const same = (a, b) => stable(a) === stable(b);
   const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
   const hasIds = a => Array.isArray(a) && a.every(x => isObj(x) && x.id != null);
   const dayISO = (d = new Date()) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -3047,7 +3051,12 @@ window.TRACKER_CONFIG = {
   const loadMeta = userId => {
     let m = null;
     try { m = JSON.parse(localStorage.getItem(META_KEY)); } catch { }
-    if (!m || m.userId !== userId) m = { userId, claims: {}, settings: null, cursor: null, settingsCursor: null, lastSync: null, snapshotDay: null };
+    if (!m || m.userId !== userId) m = { userId, claims: {}, settings: null, cursor: null, settingsCursor: null, lastSync: null, snapshotDay: null, hv: 2 };
+    if (m.hv !== 2) {
+      for (const c of state.claims) if (m.claims[c.id] === oldClaimHash(c)) m.claims[c.id] = claimHash(c);
+      if (m.settings === oldSettingsHash()) m.settings = settingsHash();
+      m.hv = 2;
+    }
     return m;
   };
   const saveMeta = () => { try { localStorage.setItem(META_KEY, JSON.stringify(meta)); } catch { } };
@@ -3381,7 +3390,7 @@ window.TRACKER_CONFIG = {
           Object.keys(state.settings).forEach(k => delete state.settings[k]);
           Object.assign(state.settings, s);
           state.lastPlan = next[1] ?? null;
-          meta.settings = hash(JSON.stringify(remote));
+          meta.settings = hash(stable(remote));
           settingsChanged = true;
         }
         bases.push(['settings', remote]);
@@ -3875,7 +3884,7 @@ window.TRACKER_CONFIG = {
   // One batch at a time keeps within Anthropic's per-minute limits (new accounts have low ones).
   const BATCH = 8, SEND_PX = 1280, THUMB_PX = 240;
   const SECTIONS = [
-    ['risk', 'Front / risk'], ['address', 'Address'], ['exterior', 'Exterior'], ['water_line', 'High-water mark'],
+    ['address', 'Address'], ['risk', 'Front / risk'], ['exterior', 'Exterior'], ['water_line', 'High-water mark'],
     ['interior', 'Interior'], ['mechanical', 'Mechanical'], ['contents', 'Contents'], ['documents', 'Documents'], ['other', 'Other']];
   const SECTION_RANK = Object.fromEntries(SECTIONS.map(([k], i) => [k, i]));
   const sectionName = k => (SECTIONS.find(s => s[0] === k) || [k, 'Unlabeled'])[1];
@@ -4105,7 +4114,7 @@ window.TRACKER_CONFIG = {
     const L = labels();
     items.forEach(i => { if (L[i.key]) delete L[i.key].pos; });
     sortItems(); savePositions(); render();
-    status('Sorted into report order: front, address, exterior, high-water marks, interior room by room, mechanical, contents, documents.');
+    status('Sorted into report order: address, front, exterior, high-water marks, interior room by room, mechanical, contents, documents.');
   });
 
   // ---------- list ----------
@@ -4199,12 +4208,13 @@ window.TRACKER_CONFIG = {
     if (!todo.length) return;
     busy = true; todo.forEach(i => { i.status = 'labeling'; }); render();
     const batches = []; for (let i = 0; i < todo.length; i += BATCH) batches.push(todo.slice(i, i + BATCH));
-    const L = labels();
-    const rooms = () => [...new Set(Object.values(L).filter(l => l.room).map(l => (l.level ? l.level + ' / ' : '') + l.room))];
+    // Always look up the claim's current label list (sync may replace it while labeling runs).
+    const rooms = () => [...new Set(Object.values(labels()).filter(l => l.room).map(l => (l.level ? l.level + ' / ' : '') + l.room))];
     let done = 0, failed = 0, firstError = '';
     const run = async b => {
       try {
         const res = await callLabels(b, rooms(), jwt, left => status(`Labeled ${done} of ${todo.length}. Waiting for Anthropic's per-minute limit… continuing in ${left}s`));
+        const L = labels();
         for (const p of res) { L[p.item.key] = { section: p.section, level: p.level || '', room: p.room, overview: !!p.overview, title: p.title, caption: p.caption }; p.item.status = 'done'; }
         b.filter(i => i.status === 'labeling').forEach(i => { i.status = 'error'; failed++; });
       } catch (e) { b.forEach(i => { i.status = 'error'; }); failed += b.length; firstError = firstError || e.message; }
