@@ -2620,7 +2620,7 @@ $('#textCopy').addEventListener('click', async () => {
 // ---------- settings ----------
 ['sheetFirm', 'sheetAddress'].forEach(id => $('#' + id).addEventListener('input', e => { S()[id] = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); }));
 // Version: bump together with CACHE in sw.js on every release.
-const APP_VERSION = 23;
+const APP_VERSION = 24;
 $('#appVersion').textContent = APP_VERSION;
 $('#photoStyle').addEventListener('input', e => { S().photoStyle = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); });
 function renderSettings() {
@@ -4377,6 +4377,22 @@ window.TRACKER_CONFIG = {
   // Photo sheet in the AdStrat layout: header (Photo Sheet, firm, insured/claim/policy), two photos per page with
   // "Level/Room - n- INSURED RISK", Date Taken, Taken By and the caption beside each, footer with page and date.
   const mdy = d => `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+  // Photos go into the sheet at 900 px and normal JPEG quality: sharp at the printed size (~150 dpi)
+  // and about 60 KB each, so a 160-photo sheet stays around 10 MB instead of 30+.
+  const SHEET_PX = 900, SHEET_Q = 0.6;
+  function sheetJpeg(it) {
+    return new Promise((res) => {
+      const img = new Image();
+      img.onload = () => {
+        const sc = Math.min(1, SHEET_PX / Math.max(img.width, img.height));
+        const cv = document.createElement('canvas'); cv.width = Math.round(img.width * sc); cv.height = Math.round(img.height * sc);
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        res(cv.toDataURL('image/jpeg', SHEET_Q));
+      };
+      img.onerror = () => res('data:image/jpeg;base64,' + it.small);
+      img.src = 'data:image/jpeg;base64,' + it.small;
+    });
+  }
   $('#phPdf').addEventListener('click', async () => {
     status('Making the photo sheet…');
     let lib; try { lib = await loadJsPDF(); } catch (e) { status(`<span class="stale-warn">${esc(e.message)}</span>`); return; }
@@ -4405,7 +4421,7 @@ window.TRACKER_CONFIG = {
         const i = p * 2 + s2; if (i >= items.length) break;
         const it = items[i], l = L[it.key] || {}, slot = SLOTS[s2];
         const boxW = IMG_R - LM, scale = Math.min(boxW / it.w, slot.h / it.h), w = it.w * scale, h = it.h * scale;
-        doc.addImage('data:image/jpeg;base64,' + it.small, 'JPEG', LM + (boxW - w) / 2, slot.top, w, h, undefined, 'FAST');
+        doc.addImage(await sheetJpeg(it), 'JPEG', LM + (boxW - w) / 2, slot.top, w, h, undefined, 'FAST');
         let y = slot.top + 48;
         const lvl = levelOf(l), room = l.room || lvl;
         const title = `${[lvl, room].filter(Boolean).join('/') || 'Photo'} - ${i + 1}- ${insured} RISK`;
@@ -4425,8 +4441,9 @@ window.TRACKER_CONFIG = {
       doc.text(`- ${p + 1} -`, 300, 764, { align: 'center' });
       doc.text(today, 528, 764, { align: 'right' });
     }
-    await deliver(doc.output('blob'), `${baseName()} photo sheet.pdf`);
-    status(`✓ Photo sheet with ${items.length} photos, 2 per page.` + (firm ? '' : ' Tip: add your firm\'s name and address under Settings → Photo captions so they print in the header.'));
+    const pdf = doc.output('blob');
+    await deliver(pdf, `${baseName()} photo sheet.pdf`);
+    status(`✓ Photo sheet with ${items.length} photos, 2 per page (${(pdf.size / 1048576).toFixed(1)} MB).` + (firm ? '' : ' Tip: add your firm\'s name and address under Settings → Photo captions so they print in the header.'));
   });
 
   // ---------- entry point on the claim's Report tab ----------
