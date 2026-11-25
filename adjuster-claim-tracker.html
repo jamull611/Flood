@@ -2620,7 +2620,7 @@ $('#textCopy').addEventListener('click', async () => {
 // ---------- settings ----------
 ['sheetFirm', 'sheetAddress'].forEach(id => $('#' + id).addEventListener('input', e => { S()[id] = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); }));
 // Version: bump together with CACHE in sw.js on every release.
-const APP_VERSION = 25;
+const APP_VERSION = 26;
 $('#appVersion').textContent = APP_VERSION;
 $('#photoStyle').addEventListener('input', e => { S().photoStyle = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); });
 function renderSettings() {
@@ -3929,6 +3929,7 @@ window.TRACKER_CONFIG = {
       <button type="button" class="btn" id="phZip">⬇ Photos (.zip)</button>
       <button type="button" class="btn" id="phPdf">📄 Photo sheet (PDF)</button>
       <button type="button" class="btn small" id="phSort">↕ Put back in report order</button>
+      <button type="button" class="btn small" id="phTidy">✨ Tidy captions (free)</button>
       <button type="button" class="btn small" id="phClear">🗑 Clear photos from this device</button>
     </div>
     <details id="phRoomsBox" style="margin:4px 0 8px"><summary class="small" style="cursor:pointer"><b>Rooms from your sketch</b> <span class="muted" id="phRoomsNote">(optional: the AI uses only these names)</span></summary>
@@ -4242,7 +4243,7 @@ window.TRACKER_CONFIG = {
           <div class="ph-top"><b>${i + 1}</b>
             <select data-f="section" aria-label="Section">${[['', it.status === 'labeling' ? 'Labeling…' : 'Not labeled'], ...SECTIONS].map(([k, n]) => `<option value="${k}" ${k === (l.section || '') ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
             <input data-f="level" value="${esc(levelOf(l))}" placeholder="Level" aria-label="Level" list="phLevels" class="ph-level">
-            <input data-f="room" value="${esc(l.room || '')}" placeholder="Room / area" aria-label="Room">
+            <input data-f="room" value="${esc(l.room || '')}" data-old="${esc(l.room || '')}" placeholder="Room / area" aria-label="Room">
             <span class="ph-move"><button type="button" class="btn icon small" data-mv="-1" aria-label="Move up">↑</button><button type="button" class="btn icon small" data-mv="1" aria-label="Move down">↓</button><button type="button" class="btn icon small" data-rm aria-label="Remove">✕</button></span>
           </div>
           <textarea data-f="caption" rows="2" placeholder="${it.status === 'error' ? 'Couldn\'t label this one: write a caption' : 'Caption'}">${esc(l.caption || '')}</textarea>
@@ -4251,17 +4252,39 @@ window.TRACKER_CONFIG = {
     const unl = items.filter(i => !labels()[i.key]).length;
     $('#phLabel').disabled = busy || !unl;
     $('#phLabel').textContent = busy ? '✨ Labeling…' : unl ? `✨ Label ${unl} with AI` : '✨ All labeled';
-    $('#phZip').disabled = $('#phPdf').disabled = $('#phSort').disabled = $('#phClear').disabled = busy || !items.length;
+    $('#phZip').disabled = $('#phPdf').disabled = $('#phSort').disabled = $('#phClear').disabled = $('#phTidy').disabled = busy || !items.length;
   }
   $('#phList').addEventListener('input', e => {
     const row = e.target.closest('[data-k]'), f = e.target.dataset.f; if (!row || !f) return;
     const L = labels(), k = row.dataset.k;
     L[k] = L[k] || { section: '', room: '', overview: false, title: '', caption: '' };
     L[k][f] = e.target.value;
-    if (f === 'caption' || f === 'room' || f === 'level') L[k].edited = true;
+    if (f === 'caption') L[k].edited = true;   // only a caption you rewrote is left alone by Tidy captions
     clearTimeout(open.t); open.t = setTimeout(save, 600);
   });
-  $('#phList').addEventListener('change', e => { if (e.target.dataset.f === 'section') { save(); } });
+  $('#phList').addEventListener('change', e => {
+    if (e.target.dataset.f === 'section') { save(); return; }
+    // Renaming a room on one photo: offer to rename it on every photo in that room (and in their captions).
+    if (e.target.dataset.f === 'room') {
+      const row = e.target.closest('[data-k]'), L = labels(), me = L[row.dataset.k];
+      const oldName = e.target.dataset.old || '', newName = e.target.value.trim();
+      e.target.dataset.old = newName;
+      if (!me || !oldName || !newName || oldName === newName) return;
+      const lvl = levelOf(me);
+      const others = items.filter(it => it.key !== row.dataset.k && L[it.key] && L[it.key].room === oldName && levelOf(L[it.key]) === lvl);
+      // The first sentence of a general caption names the room: "Showing damages to the bedroom." becomes the new name.
+      const fixCaption = l => { l.caption = String(l.caption || '').replace(/^Showing damages? to (?:the )?[^.]+\./i, `Showing damages to the ${newName.toLowerCase()}.`); };
+      fixCaption(me);
+      if (others.length && confirm(`Rename "${oldName}" to "${newName}" on all ${others.length + 1} photos in that room, including their captions?`)) {
+        for (const it of others) { L[it.key].room = newName; fixCaption(L[it.key]); }
+      }
+      save(); render();
+    }
+  });
+  $('#phTidy').addEventListener('click', () => {
+    const n = unifyRoomCaptions(); save(); sortItems(); render();
+    status(n ? `✓ Combined the general captions in each room: ${n} caption${n === 1 ? '' : 's'} updated to list everything damaged in that room. No AI used.` : 'Captions already match room by room. Nothing to change.');
+  });
   $('#phList').addEventListener('click', e => {
     const row = e.target.closest('[data-k]'); if (!row) return;
     const i = items.findIndex(x => x.key === row.dataset.k);
