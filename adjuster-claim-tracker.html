@@ -3882,6 +3882,15 @@ window.TRACKER_CONFIG = {
   // Photos picked this session: { key, file, name, taken, thumb, small (base64 JPEG), status, error }
   let items = [], claimId = null, busy = false;
   const keyOf = f => `${f.name}|${f.size}|${f.lastModified}`;
+  // Copying photos to another device often changes their date, so a photo labeled on the phone is
+  // also recognized on the computer by its name and size; its label moves to the new key.
+  function adoptLabel(f) {
+    const L = labels(), k = keyOf(f);
+    if (L[k]) return;
+    const prefix = `${f.name}|${f.size}|`;
+    const old = Object.keys(L).find(x => x.startsWith(prefix));
+    if (old) { L[k] = L[old]; delete L[old]; }
+  }
   const claim = () => claimById(claimId);
   // Level for the photo sheet title ("Basement/Basement"); older labels without one get a sensible default.
   const OUTSIDE = ['risk', 'address', 'exterior', 'water_line'];
@@ -3941,6 +3950,7 @@ window.TRACKER_CONFIG = {
     let n = 0, bad = 0;
     for (const f of fresh) {
       status(`Preparing photo ${++n} of ${fresh.length}…`);
+      adoptLabel(f);
       try {
         const t = await shrink(f, THUMB_PX, 0.7), s = await shrink(f, SEND_PX, 0.82);
         items.push({ key: keyOf(f), file: f, name: f.name, taken: f.lastModified || Date.now(), thumb: t.url, small: s.b64, w: s.w, h: s.h, status: labels()[keyOf(f)] ? 'done' : 'new' });
