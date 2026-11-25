@@ -163,3 +163,36 @@ small copies (about 1000 px, original file names) with `photos.csv`, `rooms.txt`
 24 MB. Attach it in a Claude chat and ask for a captions .csv (columns File, Section, Level, Room, Caption), then use
 **📥 Import captions**. Import matches photos by file name, tidies each room's captions and sorts into report order. It
 also reads `captions.csv` from the photo zip, so captions can be edited in Excel and imported back.
+
+## iPad app and LiDAR sketch
+
+The iPad app (`ios-app/`) is the same tracker, plus Apple's room scanner (RoomPlan). It needs an iPad Pro
+(2020 or newer) or an iPhone Pro, with iPadOS/iOS 17 or later. On each claim's **Report** tab, **📐 Sketch**:
+
+1. Pick the level, tap **＋ Scan a room**, and walk the room pointing the iPad at the walls. Tap **Done**, then
+   **Save room**. Scan the next room without closing the app, and the rooms line up on the plan.
+2. Each room is saved on the claim and synced: walls, doors, windows, openings and fixtures, named from what the
+   scanner recognized (Kitchen, Bathroom…). Rename a room or change its level in the list.
+3. The screen shows the floor plan for each level with wall lengths, plus floor SF, wall SF (gross), ceiling SF,
+   floor perimeter LF, ceiling height, and door and window counts per room.
+4. **📄 Floor plan (PDF)**: one page per level. **🧊 3D model**: a USDZ file of the rooms scanned since the app was
+   opened. **Use these rooms for photo labeling**: fills in the room list the photo labeler uses (done
+   automatically until you type your own list).
+
+The sketch and the PDF work on every device; only scanning needs the iPad app.
+
+### Getting the app onto the iPad (TestFlight)
+
+GitHub builds the app on a Mac (`.github/workflows/ios.yml`) and sends it to TestFlight. Without the keys below
+it only checks that the app compiles. One-time setup:
+
+1. developer.apple.com → Certificates, IDs & Profiles → Identifiers → **+** → App IDs → App:
+   Bundle ID `com.jamull611.claimtracker` (explicit), no capabilities.
+2. appstoreconnect.apple.com → Apps → **+** → New App: iOS, pick that Bundle ID, SKU `claimtracker`.
+3. App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys → **+**,
+   access **Admin**. Download the `.p8` file (only once) and note the Key ID and Issuer ID.
+4. GitHub → this repository → Settings → Secrets and variables → Actions → add `APPSTORE_KEY_ID`,
+   `APPSTORE_ISSUER_ID` and `APPSTORE_KEY_P8` (the whole .p8 file). The Team ID is in the workflow.
+5. Actions → **iPad app** → Run workflow. About 15 minutes after it finishes, the build appears in
+   App Store Connect → TestFlight. Add yourself under **Internal Testing** once, then install it from the
+   TestFlight app on the iPad. Later builds show up there automatically.
