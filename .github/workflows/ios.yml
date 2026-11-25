@@ -1,6 +1,6 @@
 # Builds the iPad/iPhone app and sends it to TestFlight.
 # Without the Apple secrets it only checks that the app compiles.
-# Secrets (Settings > Secrets and variables > Actions): APPLE_TEAM_ID, APPSTORE_KEY_ID,
+# Secrets (Settings > Secrets and variables > Actions): APPSTORE_KEY_ID,
 # APPSTORE_ISSUER_ID, APPSTORE_KEY_P8 (the whole .p8 file from App Store Connect > Users and Access > Integrations).
 name: iPad app
 
@@ -18,7 +18,7 @@ jobs:
   build:
     runs-on: macos-26
     env:
-      TEAM: ${{ secrets.APPLE_TEAM_ID }}
+      TEAM: ${{ secrets.APPLE_TEAM_ID || '2V38BS96MY' }}
       KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
       ISSUER: ${{ secrets.APPSTORE_ISSUER_ID }}
       KEY_P8: ${{ secrets.APPSTORE_KEY_P8 }}

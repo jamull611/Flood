@@ -2407,10 +2407,14 @@ function renderReport(c) {
   const done = steps.filter(s => prog[s.key]).length;
   const revs = c.revisions || [], open = revs.filter(r => !r.done).length;
   const nPh = window.photos ? window.photos.count(c) : 0;
+  const nSk = window.sketch ? window.sketch.count(c) : 0;
   $('#pane-report').innerHTML = `
     <div class="box" style="margin-bottom:12px"><div class="row" style="margin:0;justify-content:space-between">
       <span><b>📷 Photos</b> <span class="muted small">${nPh ? nPh + ' captioned' : 'Label, sort and rename your inspection photos'}</span></span>
       <button type="button" class="btn small primary" data-photos-open>${nPh ? 'Open photos' : 'Add photos'}</button></div></div>
+    <div class="box" style="margin-bottom:12px"><div class="row" style="margin:0;justify-content:space-between">
+      <span><b>📐 Sketch</b> <span class="muted small">${nSk ? nSk + ' room' + (nSk === 1 ? '' : 's') + ' scanned' : 'Floor plan from the iPad LiDAR scanner'}</span></span>
+      <button type="button" class="btn small" data-sketch-open>${nSk ? 'Open sketch' : 'Sketch'}</button></div></div>
     <h4>Report progress <span class="count">${done}/${steps.length}</span></h4>
     <div class="progress"><div style="width:${steps.length ? done / steps.length * 100 : 0}%"></div></div>
     <ul class="checklist">${steps.map(s => `<li><label><input type="checkbox" data-step="${esc(s.key)}" ${prog[s.key] ? 'checked' : ''}> ${esc(s.label)}</label>${prog[s.key] ? `<span class="muted small">${fmtDate(prog[s.key])}</span>` : s.status ? `<span class="muted small">→ ${esc(s.status)}</span>` : ''}</li>`).join('')}</ul>
@@ -2420,7 +2424,7 @@ function renderReport(c) {
     <form class="row" id="revForm"><input id="revText" placeholder="e.g. Add photo of water line in garage" style="flex:1;min-width:0"><button class="btn" type="submit">Add</button></form>
     ${c.status === 'Revision Request' && revs.length && !open ? '<div class="box"><div class="box-title">All revision items are fixed.</div><button type="button" class="btn small primary" id="revDone">Mark Final (resubmitted)</button></div>' : ''}`;
 }
-$('#pane-report').addEventListener('click', e => { if (e.target.closest('[data-photos-open]') && window.photos) window.photos.open(editingId); });
+$('#pane-report').addEventListener('click', e => { if (e.target.closest('[data-photos-open]') && window.photos) window.photos.open(editingId); if (e.target.closest('[data-sketch-open]') && window.sketch) window.sketch.open(editingId); });
 $('#pane-report').addEventListener('change', e => {
   const c = claimById(editingId); if (!c) return;
   const k = e.target.dataset.step, r = e.target.dataset.rev;
@@ -2620,7 +2624,7 @@ $('#textCopy').addEventListener('click', async () => {
 // ---------- settings ----------
 ['sheetFirm', 'sheetAddress'].forEach(id => $('#' + id).addEventListener('input', e => { S()[id] = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); }));
 // Version: bump together with CACHE in sw.js on every release.
-const APP_VERSION = 28;
+const APP_VERSION = 29;
 $('#appVersion').textContent = APP_VERSION;
 $('#photoStyle').addEventListener('input', e => { S().photoStyle = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); });
 function renderSettings() {
@@ -4585,6 +4589,301 @@ window.TRACKER_CONFIG = {
 
   // ---------- entry point on the claim's Report tab ----------
   window.photos = { open, count: c => Object.keys((c && c.photoLabels) || {}).length, unify: () => { const n = unifyRoomCaptions(); save(); render(); return n; } };
+})();
+</script>
+<script>
+// ---------- Sketch: LiDAR room scans from the iPad app, floor plan and measurements ----------
+// Scans come from the Claim Tracker app on a LiDAR iPad (Apple RoomPlan). Each room is stored on the claim
+// (c.sketch.rooms) as a top-down outline in meters, so it syncs and the floor plan shows on every device.
+(() => {
+  const CAP = window.Capacitor;
+  const IOS = !!(CAP && CAP.isNativePlatform && CAP.isNativePlatform() && CAP.getPlatform && CAP.getPlatform() === 'ios' && CAP.nativePromise);
+  const N = (m, o = {}) => CAP.nativePromise('TrackerNative', m, o);
+  const JSPDF_URL = 'https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js';
+  const LEVELS = ['Basement', 'Main Level', 'Upper Level', 'Attic', 'Crawlspace', 'Garage'];
+  const FT = 3.28084, SF = 10.7639;
+  let claimId = null, canScan = false, scanning = false;
+  const claim = () => claimById(claimId);
+  const rooms = c => ((c.sketch = c.sketch || { rooms: [] }).rooms = c.sketch.rooms || []);
+  const lastLevel = () => { try { return localStorage.getItem('adjusterClaimTracker.scanLevel') || 'Main Level'; } catch { return 'Main Level'; } };
+
+  // ---------- geometry ----------
+  const area = p => Math.abs(p.reduce((s, a, i) => { const b = p[(i + 1) % p.length]; return s + a[0] * b[1] - b[0] * a[1]; }, 0) / 2);
+  const perim = p => p.reduce((s, a, i) => s + Math.hypot(p[(i + 1) % p.length][0] - a[0], p[(i + 1) % p.length][1] - a[1]), 0);
+  const centroid = p => { let x = 0, y = 0, A = 0; p.forEach((a, i) => { const b = p[(i + 1) % p.length], f = a[0] * b[1] - b[0] * a[1]; A += f; x += (a[0] + b[0]) * f; y += (a[1] + b[1]) * f; }); return Math.abs(A) < 1e-9 ? [p.reduce((s, a) => s + a[0], 0) / p.length, p.reduce((s, a) => s + a[1], 0) / p.length] : [x / (3 * A), y / (3 * A)]; };
+  function hull(pts) {
+    const P = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]); if (P.length < 3) return P;
+    const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = [], up = [];
+    for (const p of P) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+    for (const p of P.reverse()) { while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+    return lo.slice(0, -1).concat(up.slice(0, -1));
+  }
+  const outline = r => { const f = (r.floors || []).filter(p => p.length >= 3).sort((a, b) => area(b) - area(a))[0]; return f || hull((r.walls || []).flatMap(w => [w.a, w.b])); };
+  const median = a => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 0; };
+  function metrics(r) {
+    const p = outline(r), h = median((r.walls || []).map(w => w.h));
+    const floor = p.length >= 3 ? area(p) * SF : 0;
+    return { floor, ceiling: floor, walls: (r.walls || []).reduce((s, w) => s + w.w * w.h, 0) * SF, perim: p.length >= 3 ? perim(p) * FT : 0, height: h, doors: (r.doors || []).length, windows: (r.windows || []).length, openings: (r.openings || []).length };
+  }
+  const ftIn = m => { const i = Math.round(m * 39.3701); return `${Math.floor(i / 12)}' ${i % 12}"`; };
+  const n0 = v => Math.round(v).toLocaleString();
+
+  // Lay out one level: rooms scanned in the same session share coordinates; separate sessions sit side by side.
+  // Each group is turned so its walls run straight across and up the page.
+  function layout(list) {
+    const groups = {};
+    list.forEach(r => (groups[r.session || r.id] = groups[r.session || r.id] || []).push(r));
+    let offX = 0; const out = [];
+    for (const g of Object.values(groups)) {
+      let sx = 0, sy = 0;
+      g.forEach(r => (r.walls || []).forEach(w => { const t = Math.atan2(w.b[1] - w.a[1], w.b[0] - w.a[0]) * 4, L = w.w || 1; sx += Math.cos(t) * L; sy += Math.sin(t) * L; }));
+      const rot = -Math.atan2(sy, sx) / 4, cs = Math.cos(rot), sn = Math.sin(rot);
+      const T = p => [p[0] * cs - p[1] * sn, p[0] * sn + p[1] * cs];
+      const tr = g.map(r => ({
+        r, outline: outline(r).map(T),
+        walls: (r.walls || []).map(w => ({ ...w, a: T(w.a), b: T(w.b) })),
+        doors: (r.doors || []).map(w => ({ ...w, a: T(w.a), b: T(w.b) })),
+        windows: (r.windows || []).map(w => ({ ...w, a: T(w.a), b: T(w.b) })),
+        openings: (r.openings || []).map(w => ({ ...w, a: T(w.a), b: T(w.b) })),
+        objects: (r.objects || []).map(o => ({ ...o, corners: o.corners.map(T) })),
+      }));
+      const pts = tr.flatMap(t => [...t.outline, ...t.walls.flatMap(w => [w.a, w.b])]);
+      if (!pts.length) continue;
+      const minX = Math.min(...pts.map(p => p[0])), minY = Math.min(...pts.map(p => p[1])), maxX = Math.max(...pts.map(p => p[0]));
+      const shift = p => [p[0] - minX + offX, p[1] - minY];
+      tr.forEach(t => { t.outline = t.outline.map(shift); for (const k of ['walls', 'doors', 'windows', 'openings']) t[k].forEach(w => { w.a = shift(w.a); w.b = shift(w.b); }); t.objects.forEach(o => { o.corners = o.corners.map(shift); }); out.push(t); });
+      offX += maxX - minX + 1.5;
+    }
+    const all = out.flatMap(t => [...t.outline, ...t.walls.flatMap(w => [w.a, w.b])]);
+    const W = all.length ? Math.max(...all.map(p => p[0])) : 1, H = all.length ? Math.max(...all.map(p => p[1])) : 1;
+    return { items: out, W: Math.max(W, 1), H: Math.max(H, 1) };
+  }
+
+  // Drawing as simple shapes, so the screen (SVG) and the PDF draw the same thing.
+  function shapes(lay) {
+    const S = [];
+    lay.items.forEach(t => { if (t.outline.length >= 3) S.push({ k: 'poly', pts: t.outline, fill: '#eef3fb' }); });
+    lay.items.forEach(t => t.objects.forEach(o => S.push({ k: 'poly', pts: o.corners, stroke: '#b9c0ca', w: 0.02 })));
+    lay.items.forEach(t => t.walls.forEach(w => S.push({ k: 'line', a: w.a, b: w.b, stroke: '#1f2937', w: 0.12 })));
+    lay.items.forEach(t => {
+      t.openings.forEach(w => S.push({ k: 'line', a: w.a, b: w.b, stroke: '#ffffff', w: 0.14 }, { k: 'line', a: w.a, b: w.b, stroke: '#9aa3af', w: 0.03, dash: true }));
+      t.doors.forEach(w => S.push({ k: 'line', a: w.a, b: w.b, stroke: '#ffffff', w: 0.14 }, { k: 'line', a: w.a, b: w.b, stroke: '#a0522d', w: 0.05 }));
+      t.windows.forEach(w => S.push({ k: 'line', a: w.a, b: w.b, stroke: '#ffffff', w: 0.10 }, { k: 'line', a: w.a, b: w.b, stroke: '#2b7bd6', w: 0.04 }));
+    });
+    lay.items.forEach(t => {
+      const pts = t.outline.length >= 3 ? t.outline : t.walls.flatMap(w => [w.a, w.b]); if (!pts.length) return;
+      const c = centroid(pts.length >= 3 ? pts : hull(pts));
+      t.walls.forEach(w => {
+        if (w.w < 0.6) return;
+        const mx = (w.a[0] + w.b[0]) / 2, my = (w.a[1] + w.b[1]) / 2, dx = w.b[0] - w.a[0], dy = w.b[1] - w.a[1], L = Math.hypot(dx, dy) || 1;
+        let nx = -dy / L, ny = dx / L; if ((c[0] - mx) * nx + (c[1] - my) * ny < 0) { nx = -nx; ny = -ny; }
+        let ang = Math.atan2(dy, dx) * 180 / Math.PI; if (ang > 90) ang -= 180; if (ang < -90) ang += 180;
+        S.push({ k: 'text', at: [mx + nx * 0.3, my + ny * 0.3], text: ftIn(w.w), size: 0.22, color: '#4b5563', rot: ang });
+      });
+      S.push({ k: 'text', at: [c[0], c[1] - 0.12], text: t.r.name || 'Room', size: 0.32, color: '#111827', bold: true });
+      S.push({ k: 'text', at: [c[0], c[1] + 0.3], text: `${n0(metrics(t.r).floor)} SF`, size: 0.24, color: '#4b5563' });
+    });
+    return S;
+  }
+
+  function svg(lay) {
+    const pad = 0.8, vb = `${-pad} ${-pad} ${lay.W + 2 * pad} ${lay.H + 2 * pad}`;
+    const P = a => `${a[0].toFixed(3)},${a[1].toFixed(3)}`;
+    const body = shapes(lay).map(s => {
+      if (s.k === 'poly') return `<polygon points="${s.pts.map(P).join(' ')}" fill="${s.fill || 'none'}" ${s.stroke ? `stroke="${s.stroke}" stroke-width="${s.w}"` : ''}/>`;
+      if (s.k === 'line') return `<line x1="${s.a[0]}" y1="${s.a[1]}" x2="${s.b[0]}" y2="${s.b[1]}" stroke="${s.stroke}" stroke-width="${s.w}" stroke-linecap="${s.dash ? 'butt' : 'square'}" ${s.dash ? 'stroke-dasharray="0.12 0.08"' : ''}/>`;
+      return `<text x="${s.at[0]}" y="${s.at[1]}" font-size="${s.size}" fill="${s.color}" text-anchor="middle" dominant-baseline="middle" ${s.bold ? 'font-weight="700"' : ''} ${s.rot ? `transform="rotate(${s.rot.toFixed(1)} ${s.at[0]} ${s.at[1]})"` : ''}>${esc(s.text)}</text>`;
+    }).join('');
+    return `<svg class="sk-plan" viewBox="${vb}" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif">${body}</svg>`;
+  }
+
+  const byLevel = c => { const g = {}; rooms(c).forEach(r => (g[r.level || 'Main Level'] = g[r.level || 'Main Level'] || []).push(r)); const ord = l => { const i = LEVELS.indexOf(l); return i < 0 ? 99 : i; }; return Object.entries(g).sort((a, b) => ord(a[0]) - ord(b[0])); };
+  const roomListText = c => byLevel(c).map(([lvl, rs]) => `${lvl}: ${rs.map(r => r.name || 'Room').join(', ')}`).join('\n');
+  // Keeps the photo labeler's room list in step with the scans, unless you've typed your own list.
+  function syncRoomList(c) {
+    const txt = roomListText(c);
+    if (!c.sketchRooms || c.sketchRooms === c.sketch.autoRooms) { c.sketchRooms = txt; c.sketch.autoRooms = txt; }
+  }
+
+  // ---------- dialog ----------
+  document.head.insertAdjacentHTML('beforeend', `<style>
+#sketchDlg .sk-actions { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+#sketchDlg .sk-room { display:grid; grid-template-columns: 1fr 130px auto; gap:6px; align-items:center; padding:8px 0; border-top:1px solid var(--line, #e5e7eb); }
+#sketchDlg .sk-room input, #sketchDlg .sk-room select { width:100%; box-sizing:border-box; min-width:0; }
+#sketchDlg .sk-m { grid-column: 1 / -1; }
+#sketchDlg .sk-plan { width:100%; height:auto; max-height:70vh; background:#fff; border:1px solid var(--line, #e5e7eb); border-radius:8px; }
+#sketchDlg table { border-collapse:collapse; width:100%; font-size:13px; }
+#sketchDlg th, #sketchDlg td { padding:4px 6px; border-bottom:1px solid var(--line, #e5e7eb); text-align:right; white-space:nowrap; }
+#sketchDlg th:first-child, #sketchDlg td:first-child { text-align:left; white-space:normal; }
+#sketchDlg .sk-tablewrap { overflow-x:auto; }
+</style>`);
+  document.body.insertAdjacentHTML('beforeend', `
+<dialog id="sketchDlg" class="sheet">
+  <div class="dlg-head"><div class="dlg-title"><div>📐 Sketch</div><div class="muted small" id="skWho"></div></div><button type="button" class="btn icon" id="skClose" aria-label="Close">✕</button></div>
+  <div class="dlg-pane">
+    <div id="skScanBox"></div>
+    <div class="sk-actions">
+      <button type="button" class="btn" id="skPdf">📄 Floor plan (PDF)</button>
+      <button type="button" class="btn" id="sk3d" hidden>🧊 3D model</button>
+      <button type="button" class="btn small" id="skRooms">Use these rooms for photo labeling</button>
+    </div>
+    <div id="skStatus" class="small muted" style="margin-bottom:8px"></div>
+    <div id="skBody"></div>
+  </div>
+</dialog>`);
+  const dlg = $('#sketchDlg'), status = h => { $('#skStatus').innerHTML = h; };
+  $('#skClose').addEventListener('click', () => dlg.close());
+
+  function render() {
+    const c = claim(); if (!c) return;
+    const list = rooms(c);
+    $('#skScanBox').innerHTML = canScan
+      ? `<div class="box" style="margin-bottom:10px"><div class="row" style="margin:0;gap:8px;flex-wrap:wrap;align-items:center">
+          <label class="small">Level <select id="skLevel">${[...new Set([...LEVELS, ...list.map(r => r.level)])].map(l => `<option ${l === lastLevel() ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+          <button type="button" class="btn primary" id="skScan" ${scanning ? 'disabled' : ''}>＋ Scan a room</button></div>
+          <div class="small muted" style="margin-top:6px">Stand in the doorway, tap Scan, and slowly walk the room pointing the iPad at the walls. Tap Done, then Save room. Scan the rooms one after another without closing the app and they line up on the plan.</div></div>`
+      : `<div class="small muted" style="margin-bottom:10px">${IOS ? 'This iPad has no LiDAR scanner, so it can\'t scan rooms. Scans made on a LiDAR iPad show up here.' : 'Rooms are scanned with the Claim Tracker app on your LiDAR iPad. Scans sync here, where you can see the floor plan and print it.'}</div>`;
+    $('#skPdf').disabled = $('#skRooms').disabled = !list.length;
+    const lv = byLevel(c);
+    $('#skBody').innerHTML = !list.length ? '<p class="muted">No rooms scanned yet.</p>' : lv.map(([lvl, rs]) => {
+      const tot = rs.reduce((a, r) => { const m = metrics(r); a.floor += m.floor; a.walls += m.walls; a.perim += m.perim; return a; }, { floor: 0, walls: 0, perim: 0 });
+      return `<h4 style="margin:14px 0 6px">${esc(lvl)} <span class="count">${rs.length} room${rs.length === 1 ? '' : 's'} · ${n0(tot.floor)} SF</span></h4>
+        ${svg(layout(rs))}
+        <div class="sk-tablewrap"><table><thead><tr><th>Room</th><th>Floor SF</th><th>Wall SF</th><th>Ceiling SF</th><th>Floor perimeter LF</th><th>Ceiling height</th><th>Doors</th><th>Windows</th></tr></thead><tbody>
+        ${rs.map(r => { const m = metrics(r); return `<tr><td>${esc(r.name || 'Room')}</td><td>${n0(m.floor)}</td><td>${n0(m.walls)}</td><td>${n0(m.ceiling)}</td><td>${n0(m.perim)}</td><td>${m.height ? ftIn(m.height) : ''}</td><td>${m.doors}</td><td>${m.windows}</td></tr>`; }).join('')}
+        <tr><td><b>Total</b></td><td><b>${n0(tot.floor)}</b></td><td><b>${n0(tot.walls)}</b></td><td><b>${n0(tot.floor)}</b></td><td><b>${n0(tot.perim)}</b></td><td></td><td></td><td></td></tr></tbody></table></div>
+        ${rs.map(r => `<div class="sk-room" data-id="${esc(r.id)}"><input data-f="name" value="${esc(r.name || '')}" placeholder="Room name"><select data-f="level">${[...new Set([...LEVELS, r.level])].map(l => `<option ${l === r.level ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><button type="button" class="btn icon small" data-del title="Delete this room">✕</button>
+          <div class="sk-m small muted">Scanned ${esc(new Date(r.scannedAt).toLocaleDateString())}${r.walls ? ` · ${r.walls.length} walls` : ''}${(r.objects || []).length ? ` · ${r.objects.length} fixtures` : ''}</div></div>`).join('')}`;
+    }).join('');
+  }
+
+  const LABELS = { kitchen: 'Kitchen', bathroom: 'Bathroom', bedroom: 'Bedroom', livingRoom: 'Living Room', diningRoom: 'Dining Room' };
+  function nameFor(c, room, level) {
+    const lab = (room.sections || []).map(s => LABELS[s.label]).find(Boolean) || 'Room';
+    const taken = rooms(c).filter(r => r.level === level).map(r => (r.name || '').toLowerCase());
+    if (!taken.includes(lab.toLowerCase())) return lab;
+    let i = 2; while (taken.includes(`${lab} ${i}`.toLowerCase())) i++; return `${lab} ${i}`;
+  }
+
+  async function scan() {
+    const c = claim(); if (!c || scanning) return;
+    const level = $('#skLevel').value; try { localStorage.setItem('adjusterClaimTracker.scanLevel', level); } catch { }
+    scanning = true; render(); status('Scanning…');
+    try {
+      const res = await N('scanRoom', { title: `${level}: room ${rooms(c).filter(r => r.level === level).length + 1}` });
+      const r = res.room, c2 = claimById(claimId);
+      const room = { id: 'r' + Date.now().toString(36), name: nameFor(c2, r, level), level, session: r.session, scannedAt: new Date().toISOString(),
+        walls: r.walls, doors: r.doors, windows: r.windows, openings: r.openings, objects: r.objects, floors: r.floors, floorY: r.floorY };
+      rooms(c2).push(room); syncRoomList(c2); save();
+      const m = metrics(room);
+      status(`✓ Saved <b>${esc(room.name)}</b>: ${n0(m.floor)} SF floor, ${room.walls.length} walls, ${m.doors} doors, ${m.windows} windows. Rename it below if needed.`);
+      render();
+      const inp = dlg.querySelector(`[data-id="${room.id}"] [data-f="name"]`); if (inp) { inp.focus(); inp.select(); }
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      status(/cancel/i.test(msg) ? 'Scan cancelled.' : `<span class="stale-warn">Scan failed: ${esc(msg)}</span>`);
+    } finally { scanning = false; render(); }
+  }
+
+  dlg.addEventListener('click', e => {
+    if (e.target.id === 'skScan') return scan();
+    const row = e.target.closest('[data-id]');
+    if (row && e.target.closest('[data-del]')) {
+      const c = claim(), r = rooms(c).find(x => x.id === row.dataset.id);
+      if (!r || !confirm(`Delete the scan of "${r.name || 'Room'}"?`)) return;
+      c.sketch.rooms = rooms(c).filter(x => x !== r); syncRoomList(c); save(); render();
+    }
+  });
+  dlg.addEventListener('change', e => {
+    const row = e.target.closest('[data-id]'), f = e.target.dataset.f; if (!row || !f) return;
+    const c = claim(), r = rooms(c).find(x => x.id === row.dataset.id); if (!r) return;
+    r[f] = e.target.value.trim(); syncRoomList(c); save(); render();
+  });
+  $('#skRooms').addEventListener('click', () => {
+    const c = claim(), txt = roomListText(c);
+    if (c.sketchRooms && c.sketchRooms !== c.sketch.autoRooms && c.sketchRooms !== txt && !confirm('Replace the room list you typed on the Photos screen with the scanned rooms?')) return;
+    c.sketchRooms = txt; c.sketch.autoRooms = txt; save();
+    status('✓ Photo labeling will use these rooms:<br>' + esc(txt).replace(/\n/g, '<br>'));
+  });
+  $('#sk3d').addEventListener('click', async () => {
+    const c = claim();
+    try { await N('export3D', { name: `${c.insured || 'Claim'} 3D model` }); status('✓ 3D model saved.'); }
+    catch (e) { const m = (e && e.message) || ''; if (!/not saved|cancel/i.test(m)) status(`<span class="stale-warn">${esc(m)}</span>`); }
+  });
+
+  // ---------- floor plan PDF: one page per level, plan on top, measurements below ----------
+  function loadPdf() {
+    if (window.jspdf) return Promise.resolve(window.jspdf);
+    return new Promise((res, rej) => { const s = document.createElement('script'); s.src = JSPDF_URL; s.onload = () => res(window.jspdf); s.onerror = () => rej(new Error('The PDF maker needs an internet connection to load.')); document.head.appendChild(s); });
+  }
+  const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  async function pdf() {
+    const c = claim(); if (!c || !rooms(c).length) return;
+    status('Making the floor plan…');
+    try {
+      const lib = await loadPdf(), doc = new lib.jsPDF({ unit: 'pt', format: 'letter' });
+      const PW = 612, PH = 792, M = 36;
+      byLevel(c).forEach(([lvl, rs], pi) => {
+        if (pi) doc.addPage();
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(17, 24, 39);
+        doc.text(`${c.insured || ''}${c.claimNo ? '  #' + c.claimNo : ''}`, M, M + 4);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(75, 85, 99);
+        doc.text([c.address || '', `${lvl}: floor plan from LiDAR scan`].filter(Boolean), M, M + 20);
+        const lay = layout(rs), boxW = PW - 2 * M, boxH = 430, top = M + 50;
+        const k = Math.min(boxW / (lay.W + 1.6), boxH / (lay.H + 1.6)), ox = M + (boxW - lay.W * k) / 2, oy = top + (boxH - lay.H * k) / 2;
+        const X = p => [ox + p[0] * k, oy + p[1] * k];
+        for (const s of shapes(lay)) {
+          if (s.k === 'poly') {
+            const p = s.pts.map(X); const d = p.slice(1).map((q, i) => [q[0] - p[i][0], q[1] - p[i][1]]);
+            if (s.fill) doc.setFillColor(...rgb(s.fill)); if (s.stroke) { doc.setDrawColor(...rgb(s.stroke)); doc.setLineWidth(s.w * k); }
+            doc.lines(d, p[0][0], p[0][1], [1, 1], s.fill ? 'F' : 'S', true);
+          } else if (s.k === 'line') {
+            const a = X(s.a), b = X(s.b);
+            doc.setDrawColor(...rgb(s.stroke)); doc.setLineWidth(Math.max(s.w * k, 0.3));
+            if (s.dash) doc.setLineDashPattern([3, 2], 0); doc.line(a[0], a[1], b[0], b[1]); if (s.dash) doc.setLineDashPattern([], 0);
+          } else {
+            const a = X(s.at); doc.setFont('helvetica', s.bold ? 'bold' : 'normal'); doc.setFontSize(Math.max(5, Math.min(s.size * k, s.bold ? 11 : 8))); doc.setTextColor(...rgb(s.color));
+            doc.text(s.text, a[0], a[1], { align: 'center', baseline: 'middle', angle: s.rot ? -s.rot : 0 });
+          }
+        }
+        // measurements table
+        const cols = [['Room', 150], ['Floor SF', 52], ['Wall SF', 52], ['Ceiling SF', 56], ['Perimeter LF', 66], ['Height', 52], ['Doors', 40], ['Windows', 50]];
+        let y = top + boxH + 24;
+        const row = (vals, bold) => {
+          if (y > PH - M) { doc.addPage(); y = M + 10; }
+          doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(9); doc.setTextColor(17, 24, 39);
+          let x = M; vals.forEach((v, i) => { const w = cols[i][1]; doc.text(String(v), i ? x + w - 4 : x, y, { align: i ? 'right' : 'left' }); x += w; });
+          doc.setDrawColor(229, 231, 235); doc.setLineWidth(0.5); doc.line(M, y + 4, M + cols.reduce((s, c) => s + c[1], 0), y + 4); y += 15;
+        };
+        row(cols.map(c => c[0]), true);
+        const tot = { floor: 0, walls: 0, perim: 0 };
+        rs.forEach(r => { const m = metrics(r); tot.floor += m.floor; tot.walls += m.walls; tot.perim += m.perim; row([r.name || 'Room', n0(m.floor), n0(m.walls), n0(m.ceiling), n0(m.perim), m.height ? ftIn(m.height) : '', m.doors, m.windows]); });
+        row(['Total', n0(tot.floor), n0(tot.walls), n0(tot.floor), n0(tot.perim), '', '', ''], true);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(107, 114, 128);
+        doc.text('Measured with the iPad LiDAR scanner (Apple RoomPlan). Wall SF is gross (doors and windows not deducted). Verify critical dimensions.', M, Math.min(y + 6, PH - 20));
+      });
+      const blob = doc.output('blob'), name = `${(c.insured || 'Claim').replace(/[\\/:*?"<>|]/g, ' ')} floor plan.pdf`;
+      if (CAP && CAP.isNativePlatform && CAP.isNativePlatform() && CAP.nativePromise) {
+        const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(blob); });
+        try { await N('saveFile', { name, mime: 'application/pdf', data: b64 }); status('✓ Floor plan saved.'); } catch (e) { status(/not saved|cancel/i.test((e && e.message) || '') ? '' : `<span class="stale-warn">${esc(e.message)}</span>`); }
+      } else {
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 60000); status('✓ Floor plan downloaded.');
+      }
+    } catch (e) { status(`<span class="stale-warn">${esc((e && e.message) || String(e))}</span>`); }
+  }
+  $('#skPdf').addEventListener('click', pdf);
+
+  async function open(id) {
+    claimId = id; const c = claim(); if (!c) return;
+    $('#skWho').textContent = [c.insured, c.claimNo && '#' + c.claimNo].filter(Boolean).join(' · ');
+    status('');
+    if (IOS) { try { const i = await N('info'); canScan = !!i.roomScan; $('#sk3d').hidden = !canScan; } catch { canScan = false; } }
+    render();
+    if (!dlg.open) dlg.showModal();
+  }
+  window.sketch = { open, count: c => ((c && c.sketch && c.sketch.rooms) || []).length, metrics, layout, roomListText };
 })();
 </script>
 <script>
