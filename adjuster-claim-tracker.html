@@ -589,6 +589,11 @@ h4 { margin: 16px 0 8px; font-size: 14px; display: flex; align-items: center; ga
         </div>
       </div>
 
+      <div class="panel" id="versionPanel">
+        <h2>About</h2>
+        <p class="muted small" style="margin:0">Claim Tracker version <b id="appVersion"></b>. If something acts up, include this number when you report it.</p>
+      </div>
+
       <div class="panel">
         <h2>Pay formula</h2>
         <div class="row">Pay = (((Biller × <input type="number" step="0.01" id="sA" style="width:70px">) − $<input type="number" step="0.5" id="sB" style="width:60px">) × <input type="number" step="0.01" id="sC" style="width:70px">) × <input type="number" step="0.01" id="sD" style="width:70px"></div>
@@ -2614,6 +2619,9 @@ $('#textCopy').addEventListener('click', async () => {
 'use strict';
 // ---------- settings ----------
 ['sheetFirm', 'sheetAddress'].forEach(id => $('#' + id).addEventListener('input', e => { S()[id] = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); }));
+// Version: bump together with CACHE in sw.js on every release.
+const APP_VERSION = 23;
+$('#appVersion').textContent = APP_VERSION;
 $('#photoStyle').addEventListener('input', e => { S().photoStyle = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); });
 function renderSettings() {
   const s = S();
@@ -3921,6 +3929,7 @@ window.TRACKER_CONFIG = {
       <button type="button" class="btn" id="phZip">⬇ Photos (.zip)</button>
       <button type="button" class="btn" id="phPdf">📄 Photo sheet (PDF)</button>
       <button type="button" class="btn small" id="phSort">↕ Put back in report order</button>
+      <button type="button" class="btn small" id="phClear">🗑 Clear photos from this device</button>
     </div>
     <div class="small" id="phStatus" style="margin:4px 0 10px"></div>
     <div id="phList"></div>
@@ -3932,16 +3941,73 @@ window.TRACKER_CONFIG = {
   // Photos stay in memory while you keep working on the same claim; opening another claim starts fresh.
   $('#phClose').addEventListener('click', () => pdlg.close());
   $('#phGoogle').addEventListener('click', () => pickFromGoogle());
+  $('#phClear').addEventListener('click', () => clearDevice());
 
-  function open(id) {
+  // ---------- photos kept on this device ----------
+  // Each claim's photos are saved in this browser's own storage (IndexedDB), so they're still here after a
+  // reload. Nothing is uploaded. "Clear photos from this device" removes them; the captions stay on the claim.
+  const PDB = 'adjusterClaimTracker.photos';
+  function pdb(mode, fn) {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open(PDB, 1);
+      r.onupgradeneeded = () => { const st = r.result.createObjectStore('photos', { keyPath: 'id' }); st.createIndex('claim', 'claimId'); };
+      r.onerror = () => rej(r.error);
+      r.onsuccess = () => {
+        const db = r.result, tx = db.transaction('photos', mode), out = fn(tx.objectStore('photos'));
+        tx.oncomplete = () => { db.close(); res(out && out.result); };
+        tx.onerror = tx.onabort = () => { db.close(); rej(tx.error); };
+      };
+    });
+  }
+  let storeWarned = false;
+  async function keepPhoto(it) {
+    const rec = { id: claimId + '|' + it.key, claimId, key: it.key, name: it.name, type: it.file.type, taken: it.taken, w: it.w, h: it.h, thumb: it.thumb, small: it.small, blob: it.file };
+    try { await pdb('readwrite', st => st.put(rec)); }
+    catch (e) {
+      // Out of room (usually a phone): keep the smaller copy for the photo sheet, without the full-size original.
+      try { await pdb('readwrite', st => st.put({ ...rec, blob: null })); }
+      catch (e2) { console.warn('Could not keep photo on this device', e2); }
+      if (!storeWarned) { storeWarned = true; toast('This device is running low on room, so full-size originals aren\'t all kept. The photo sheet still works.', 7000); }
+    }
+  }
+  const forgetPhoto = key => pdb('readwrite', st => st.delete(claimId + '|' + key)).catch(() => { });
+  async function loadKept(id) {
+    let recs = [];
+    try { recs = await pdb('readonly', st => st.index('claim').getAll(id)) || []; } catch (e) { console.warn(e); }
+    return recs.map(r => ({ key: r.key, name: r.name, taken: r.taken, w: r.w, h: r.h, thumb: r.thumb, small: r.small,
+      file: r.blob ? new File([r.blob], r.name, { type: r.type || r.blob.type, lastModified: r.taken }) : null, status: 'new' }));
+  }
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });   // ask the browser not to clear them
+
+  async function open(id) {
     if (busy && claimId !== id) { toast('Still labeling photos for another claim. Try again in a moment.'); return; }
-    if (claimId !== id) items = [];
+    const switching = claimId !== id;
+    if (switching) items = [];
     claimId = id;
     const c = claim(); if (!c) return;
     $('#phWho').textContent = [c.insured, c.claimNo && '#' + c.claimNo].filter(Boolean).join(' · ');
     if (!pdlg.open) pdlg.showModal();
     render();
-    if (!items.length) status(`Add the inspection photos from your phone. ${Object.keys(labels()).length ? `Captions for ${Object.keys(labels()).length} photos are saved on this claim and come back when you add the same photos.` : 'The AI labels each one with its room and a caption (about 1¢ per photo); you can edit everything.'}`);
+    if (switching) {
+      status('Loading photos saved on this device…');
+      const kept = await loadKept(id);
+      if (claimId !== id) return;
+      const L = labels();
+      kept.forEach(it => { it.status = L[it.key] ? 'done' : 'new'; });
+      items = kept; sortItems(); render();
+    }
+    const nCap = Object.keys(labels()).length;
+    if (items.length) {
+      const unl = items.filter(i => !labels()[i.key]).length;
+      status(`${items.length} photo${items.length === 1 ? '' : 's'} saved on this device.` + (unl ? ` ${unl} still need labels: tap <b>✨ Label</b>.` : '') +
+        (nCap > items.length ? ` <span class="muted">This claim has captions for ${nCap - items.length} more photo${nCap - items.length === 1 ? '' : 's'} that aren't on this device; add them to see them.</span>` : ''));
+    } else status(`Add the inspection photos. ${nCap ? `Captions for ${nCap} photos are saved on this claim and come back when you add the same photos.` : 'The AI labels each one with its room and a caption (about 1¢ per photo); you can edit everything.'} Photos stay saved on this device until you clear them.`);
+  }
+  async function clearDevice() {
+    if (!items.length) return;
+    if (!confirm(`Remove this claim's ${items.length} photos from this device? Their captions stay on the claim, and adding the same photos again brings them back.`)) return;
+    try { const recs = await pdb('readonly', st => st.index('claim').getAllKeys(claimId)) || []; await pdb('readwrite', st => recs.forEach(k => st.delete(k))); } catch (e) { console.warn(e); }
+    items = []; render(); status('Photos removed from this device. Captions are still saved on the claim.');
   }
 
   // ---------- adding photos ----------
@@ -3963,15 +4029,19 @@ window.TRACKER_CONFIG = {
   async function addFiles(all) {
     const files = all.filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|heic|webp)$/i.test(f.name));
     if (!files.length) return;
-    const have = new Set(items.map(i => i.key));
-    const fresh = files.filter(f => { const k = keyOf(f); if (have.has(k)) return false; have.add(k); return true; });   // skips repeats, also within this batch
+    // Skip photos already here, matched by name and size (copies from another device can have a new date).
+    const nameSize = k => k.split('|').slice(0, 2).join('|');
+    const have = new Set(items.map(i => nameSize(i.key)));
+    const fresh = files.filter(f => { const k = nameSize(keyOf(f)); if (have.has(k)) return false; have.add(k); return true; });
     let n = 0, bad = 0;
     for (const f of fresh) {
       status(`Preparing photo ${++n} of ${fresh.length}…`);
       adoptLabel(f);
       try {
         const t = await shrink(f, THUMB_PX, 0.7), s = await shrink(f, SEND_PX, 0.82);
-        items.push({ key: keyOf(f), file: f, name: f.name, taken: f.lastModified || Date.now(), thumb: t.url, small: s.b64, w: s.w, h: s.h, status: labels()[keyOf(f)] ? 'done' : 'new' });
+        const it = { key: keyOf(f), file: f, name: f.name, taken: f.lastModified || Date.now(), thumb: t.url, small: s.b64, w: s.w, h: s.h, status: labels()[keyOf(f)] ? 'done' : 'new' };
+        items.push(it);
+        await keepPhoto(it);
       } catch (err) { bad++; console.warn('Could not read photo', f.name, err); }
     }
     sortItems();
@@ -4137,7 +4207,7 @@ window.TRACKER_CONFIG = {
     const unl = items.filter(i => !labels()[i.key]).length;
     $('#phLabel').disabled = busy || !unl;
     $('#phLabel').textContent = busy ? '✨ Labeling…' : unl ? `✨ Label ${unl} with AI` : '✨ All labeled';
-    $('#phZip').disabled = $('#phPdf').disabled = $('#phSort').disabled = busy || !items.length;
+    $('#phZip').disabled = $('#phPdf').disabled = $('#phSort').disabled = $('#phClear').disabled = busy || !items.length;
   }
   $('#phList').addEventListener('input', e => {
     const row = e.target.closest('[data-k]'), f = e.target.dataset.f; if (!row || !f) return;
@@ -4157,7 +4227,7 @@ window.TRACKER_CONFIG = {
       [items[i], items[j]] = [items[j], items[i]];
       savePositions(); render();
       const el = $('#phList').children[j]; if (el) el.scrollIntoView({ block: 'nearest' });
-    } else if (e.target.closest('[data-rm]')) { items.splice(i, 1); render(); }
+    } else if (e.target.closest('[data-rm]')) { const [gone] = items.splice(i, 1); if (gone) forgetPhoto(gone.key); render(); }
   });
 
   // ---------- labeling ----------
@@ -4288,11 +4358,16 @@ window.TRACKER_CONFIG = {
   $('#phZip').addEventListener('click', async () => {
     const names = fileNames(), L = labels(), files = [];
     status('Building the zip…');
-    for (let i = 0; i < items.length; i++) files.push({ name: names[i], data: new Uint8Array(await items[i].file.arrayBuffer()) });
+    let smallOnly = 0;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.file) files.push({ name: names[i], data: new Uint8Array(await it.file.arrayBuffer()) });
+      else { smallOnly++; files.push({ name: names[i].replace(/\.[a-z0-9]+$/i, '.jpg'), data: Uint8Array.from(atob(it.small), ch => ch.charCodeAt(0)) }); }
+    }
     const csv = ['Photo,File,Section,Level,Room,Caption', ...items.map((it, i) => { const l = L[it.key] || {}; return [i + 1, names[i], sectionName(l.section), levelOf(l), l.room || '', l.caption || ''].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','); })].join('\r\n');
     files.push({ name: 'captions.csv', data: new TextEncoder().encode('﻿' + csv) });
     await deliver(zip(files), `${baseName()} photos.zip`);
-    status(`✓ ${items.length} photos renamed in report order, plus captions.csv with every caption.`);
+    status(`✓ ${items.length} photos renamed in report order, plus captions.csv with every caption.` + (smallOnly ? ` <span class="stale-warn">${smallOnly} are smaller copies: the full-size originals weren't kept on this device.</span>` : ''));
   });
 
   function loadJsPDF() {

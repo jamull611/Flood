@@ -134,8 +134,10 @@ On a claim, open **Report → Photos**:
    "Level/Room - n- INSURED RISK", Date Taken, Taken By and the caption. Set the firm name and address under
    Settings → Photo captions.
 
-Only the labels are saved on the claim (and synced). The photos stay on your phone, so add the same photos
-again later and their captions come back without being labeled again. Settings → **Photo captions** lets you
+Only the labels are saved on the claim (and synced). The photos themselves are kept on the device you added them
+on (in the browser's own storage), so they're still there after a reload; **🗑 Clear photos from this device**
+removes them when the claim is done. On another device, add the same photos and their captions come back
+without being labeled again (matched by file name and size). Settings → About shows the version number. Settings → **Photo captions** lets you
 describe your caption style. Cost: about 1¢ per photo (photos are shrunk to 1280 px before sending).
 Photos are sent to Anthropic's API to be labeled; check that your firm and carriers allow that.
 
