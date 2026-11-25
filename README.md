@@ -156,3 +156,9 @@ OAuth consent screen in Testing with your Google account as a test user and the 
 `photospicker.mediaitems.readonly`; a Web OAuth client with origin `https://jamull611.github.io`. Its Client ID is
 in `TRACKER_CONFIG.googleClientId`. If the tracker says Google blocked the download, deploy
 `supabase/functions/photo-proxy/index.ts` as an Edge Function named `photo-proxy` (Verify JWT on).
+
+**Labeling in a Claude chat instead (no API cost):** on the Photos page, **📤 Export for labeling in chat** makes a zip of
+small copies (about 1000 px, original file names) with `photos.csv`, `rooms.txt` and `style.txt`, split into parts under
+24 MB. Attach it in a Claude chat and ask for a captions .csv (columns File, Section, Level, Room, Caption), then use
+**📥 Import captions**. Import matches photos by file name, tidies each room's captions and sorts into report order. It
+also reads `captions.csv` from the photo zip, so captions can be edited in Excel and imported back.

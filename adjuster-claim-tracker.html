@@ -2620,7 +2620,7 @@ $('#textCopy').addEventListener('click', async () => {
 // ---------- settings ----------
 ['sheetFirm', 'sheetAddress'].forEach(id => $('#' + id).addEventListener('input', e => { S()[id] = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); }));
 // Version: bump together with CACHE in sw.js on every release.
-const APP_VERSION = 26;
+const APP_VERSION = 27;
 $('#appVersion').textContent = APP_VERSION;
 $('#photoStyle').addEventListener('input', e => { S().photoStyle = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); });
 function renderSettings() {
@@ -3930,6 +3930,8 @@ window.TRACKER_CONFIG = {
       <button type="button" class="btn" id="phPdf">📄 Photo sheet (PDF)</button>
       <button type="button" class="btn small" id="phSort">↕ Put back in report order</button>
       <button type="button" class="btn small" id="phTidy">✨ Tidy captions (free)</button>
+      <button type="button" class="btn small" id="phExportChat">📤 Export for labeling in chat</button>
+      <label class="btn small">📥 Import captions<input type="file" id="phImport" accept=".csv,text/csv" hidden></label>
       <button type="button" class="btn small" id="phClear">🗑 Clear photos from this device</button>
     </div>
     <details id="phRoomsBox" style="margin:4px 0 8px"><summary class="small" style="cursor:pointer"><b>Rooms from your sketch</b> <span class="muted" id="phRoomsNote">(optional: the AI uses only these names)</span></summary>
@@ -4252,7 +4254,7 @@ window.TRACKER_CONFIG = {
     const unl = items.filter(i => !labels()[i.key]).length;
     $('#phLabel').disabled = busy || !unl;
     $('#phLabel').textContent = busy ? '✨ Labeling…' : unl ? `✨ Label ${unl} with AI` : '✨ All labeled';
-    $('#phZip').disabled = $('#phPdf').disabled = $('#phSort').disabled = $('#phClear').disabled = $('#phTidy').disabled = busy || !items.length;
+    $('#phZip').disabled = $('#phPdf').disabled = $('#phSort').disabled = $('#phClear').disabled = $('#phTidy').disabled = $('#phExportChat').disabled = busy || !items.length;
   }
   $('#phList').addEventListener('input', e => {
     const row = e.target.closest('[data-k]'), f = e.target.dataset.f; if (!row || !f) return;
@@ -4422,6 +4424,78 @@ window.TRACKER_CONFIG = {
     setTimeout(() => URL.revokeObjectURL(a.href), 60000);
   }
 
+  // ---------- labeling in a Claude chat instead of the paid API ----------
+  // Export: small copies (about 1000 px) with their original file names, plus photos.csv (file, time taken, any
+  // labels so far), rooms.txt and style.txt; split into parts under ~24 MB to fit chat upload limits.
+  // Import: a captions .csv (File, Section, Level, Room, Caption; same format as captions.csv in the photo zip)
+  // is matched to photos by file name, then captions are tidied and put in report order. No API cost.
+  const csvCell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const jpegName = n => /\.jpe?g$/i.test(n) ? n : n + '.jpg';
+  function smallJpeg(it, px, q) {
+    return new Promise(res => {
+      const img = new Image();
+      img.onload = () => { const sc = Math.min(1, px / Math.max(img.width, img.height)); const cv = document.createElement('canvas'); cv.width = Math.round(img.width * sc); cv.height = Math.round(img.height * sc); cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height); cv.toBlob(b => res(b), 'image/jpeg', q); };
+      img.onerror = () => res(new Blob([Uint8Array.from(atob(it.small), c => c.charCodeAt(0))], { type: 'image/jpeg' }));
+      img.src = 'data:image/jpeg;base64,' + it.small;
+    });
+  }
+  $('#phExportChat').addEventListener('click', async () => {
+    const c = claim(), L = labels(), enc = new TextEncoder(), LIMIT = 24 * 1048576;
+    const sorted = [...items].sort((a, b) => a.taken - b.taken);
+    const rows = ['File,Taken,Section,Level,Room,Caption', ...sorted.map(it => { const l = L[it.key] || {}; return [jpegName(it.name), new Date(it.taken).toLocaleString(), l.section ? sectionName(l.section) : '', l.section ? levelOf(l) : '', l.room || '', l.caption || ''].map(csvCell).join(','); })];
+    const extras = [
+      { name: 'photos.csv', data: enc.encode('\ufeff' + rows.join('\r\n')) },
+      { name: 'rooms.txt', data: enc.encode(c.sketchRooms || '(no room list)') },
+      { name: 'style.txt', data: enc.encode(S().photoStyle || '(no style notes)') },
+      { name: 'README.txt', data: enc.encode(`Photos from ${c.insured || 'a claim'}${c.claimNo ? ' #' + c.claimNo : ''} for labeling in a Claude chat.\nReturn a captions .csv with the columns File, Section, Level, Room, Caption, then use Import captions on the Photos page.\n`) }];
+    const parts = [[...extras]]; let size = extras.reduce((a, f) => a + f.data.length, 0), n = 0;
+    for (const it of sorted) {
+      status(`Preparing photo ${++n} of ${sorted.length}…`);
+      const data = new Uint8Array(await (await smallJpeg(it, 1000, 0.7)).arrayBuffer());
+      if (size + data.length > LIMIT) { parts.push([]); size = 0; }
+      parts[parts.length - 1].push({ name: jpegName(it.name), data }); size += data.length;
+    }
+    for (let i = 0; i < parts.length; i++) await deliver(zip(parts[i]), `${baseName()} for chat labeling${parts.length > 1 ? ` part ${i + 1} of ${parts.length}` : ''}.zip`);
+    status(`✓ ${sorted.length} photos ready for labeling in chat${parts.length > 1 ? ` in ${parts.length} zip files (attach them one at a time)` : ''}. Attach the zip in your Claude chat, then use <b>📥 Import captions</b> with the file you get back.`);
+  });
+  function parseCsv(text) {
+    const rows = [], row = []; let cell = '', q = false;
+    text = text.replace(/^\ufeff/, '');
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (q) { if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch; }
+      else if (ch === '"') q = true;
+      else if (ch === ',') { row.push(cell); cell = ''; }
+      else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); cell = ''; if (row.some(x => x !== '')) rows.push(row.splice(0)); else row.length = 0; }
+      else cell += ch;
+    }
+    row.push(cell); if (row.some(x => x !== '')) rows.push(row);
+    return rows;
+  }
+  const sectionKey = v => { const t = String(v || '').trim().toLowerCase(); const hit = SECTIONS.find(([k, n]) => k === t || n.toLowerCase() === t || k.replace('_', ' ') === t); return hit ? hit[0] : t ? 'other' : ''; };
+  $('#phImport').addEventListener('change', async e => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    const rows = parseCsv(await f.text()); if (rows.length < 2) { status('<span class="stale-warn">That file has no captions in it.</span>'); return; }
+    const head = rows[0].map(h => h.trim().toLowerCase()), col = n => head.indexOf(n);
+    if (col('file') < 0 || col('caption') < 0) { status('<span class="stale-warn">The file needs at least the columns File and Caption.</span>'); return; }
+    const base = n => String(n || '').trim().toLowerCase().replace(/\.[a-z0-9]+$/, '');
+    const byName = new Map(items.map(it => [base(it.name), it]));
+    const L = labels(); let matched = 0; const missing = [];
+    for (const r of rows.slice(1)) {
+      const name = col('original') >= 0 && r[col('original')] ? r[col('original')] : r[col('file')]; const it = byName.get(base(name));
+      if (!it) { if (name) missing.push(name); continue; }
+      const get = n => col(n) >= 0 ? String(r[col(n)] || '').trim() : '';
+      const caption = get('caption'); if (!caption) continue;
+      const old = L[it.key] || {};
+      L[it.key] = { ...old, section: sectionKey(get('section')) || old.section || 'other', level: get('level') || old.level || '', room: get('room') || old.room || '',
+        overview: col('overview') >= 0 ? /^(y|yes|true|1)$/i.test(get('overview')) : !!old.overview, title: get('title') || caption.replace(/[.].*$/, '').split(/\s+/).slice(0, 6).join(' '), caption };
+      delete L[it.key].pos; delete L[it.key].edited;
+      it.status = 'done'; matched++;
+    }
+    unifyRoomCaptions(); items.forEach(it => { if (L[it.key]) delete L[it.key].pos; }); sortItems(); savePositions(); render();
+    status(`✓ Imported captions for ${matched} photo${matched === 1 ? '' : 's'} and put them in report order.` + (missing.length ? ` <span class="stale-warn">${missing.length} file name${missing.length === 1 ? '' : 's'} didn't match a photo here (e.g. ${esc(missing[0])}).</span>` : ''));
+  });
+
   $('#phZip').addEventListener('click', async () => {
     const names = fileNames(), L = labels(), files = [];
     status('Building the zip…');
@@ -4431,7 +4505,7 @@ window.TRACKER_CONFIG = {
       if (it.file) files.push({ name: names[i], data: new Uint8Array(await it.file.arrayBuffer()) });
       else { smallOnly++; files.push({ name: names[i].replace(/\.[a-z0-9]+$/i, '.jpg'), data: Uint8Array.from(atob(it.small), ch => ch.charCodeAt(0)) }); }
     }
-    const csv = ['Photo,File,Section,Level,Room,Caption', ...items.map((it, i) => { const l = L[it.key] || {}; return [i + 1, names[i], sectionName(l.section), levelOf(l), l.room || '', l.caption || ''].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','); })].join('\r\n');
+    const csv = ['Photo,File,Original,Section,Level,Room,Caption', ...items.map((it, i) => { const l = L[it.key] || {}; return [i + 1, names[i], it.name, sectionName(l.section), levelOf(l), l.room || '', l.caption || ''].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','); })].join('\r\n');
     files.push({ name: 'captions.csv', data: new TextEncoder().encode('﻿' + csv) });
     await deliver(zip(files), `${baseName()} photos.zip`);
     status(`✓ ${items.length} photos renamed in report order, plus captions.csv with every caption.` + (smallOnly ? ` <span class="stale-warn">${smallOnly} are smaller copies: the full-size originals weren't kept on this device.</span>` : ''));
