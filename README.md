@@ -175,7 +175,9 @@ The iPad app (`ios-app/`) is the same tracker, plus Apple's room scanner (RoomPl
    scanner recognized (Kitchen, Bathroom…). Rename a room or change its level in the list.
 3. The screen shows the floor plan for each level with wall lengths, plus floor SF, wall SF (gross), ceiling SF,
    floor perimeter LF, ceiling height, and door and window counts per room.
-4. **📄 Floor plan (PDF)**: one page per level. **🧊 3D model**: a USDZ file of the rooms scanned since the app was
+4. **✥ Move rooms**: drag a room into place (it snaps against nearby walls); tap a room to turn it 90° or 2°.
+   Rooms that landed on top of each other are set side by side automatically until you place them.
+5. **📄 Floor plan (PDF)**: one page per level. **🧊 3D model**: a USDZ file of the rooms scanned since the app was
    opened. **Use these rooms for photo labeling**: fills in the room list the photo labeler uses (done
    automatically until you type your own list).
 

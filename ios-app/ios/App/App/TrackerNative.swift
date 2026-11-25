@@ -31,6 +31,7 @@ public class TrackerNativePlugin: CAPPlugin, CAPBridgedPlugin {
     private var arSession: ARSession?
     private var sessionId = ""
     private var rooms: [CapturedRoom] = []
+    private var scanner: RoomScanViewController?
 
     @objc func info(_ call: CAPPluginCall) {
         call.resolve([
@@ -49,9 +50,16 @@ public class TrackerNativePlugin: CAPPlugin, CAPBridgedPlugin {
         }
         let title = call.getString("title") ?? "Scan a room"
         DispatchQueue.main.async {
-            if self.arSession == nil { self.arSession = ARSession(); self.sessionId = UUID().uuidString }
-            let vc = RoomScanViewController(arSession: self.arSession!, title: title)
-            vc.modalPresentationStyle = .fullScreen
+            // One scanner screen (and one AR session) is kept for the whole visit: starting a fresh scanner
+            // for each room restarts tracking, and the rooms then land on top of each other.
+            if self.arSession == nil || self.scanner == nil {
+                self.arSession = ARSession(); self.sessionId = UUID().uuidString
+                let vc = RoomScanViewController(arSession: self.arSession!)
+                vc.modalPresentationStyle = .fullScreen
+                self.scanner = vc
+            }
+            let vc = self.scanner!
+            vc.prepare(title: title)
             vc.onFinish = { room, error in
                 if let room = room {
                     self.rooms.append(room)
@@ -95,6 +103,7 @@ public class TrackerNativePlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async {
             self.arSession?.pause()
             self.arSession = nil
+            self.scanner = nil
             self.rooms = []
             call.resolve()
         }
@@ -138,7 +147,7 @@ public class TrackerNativePlugin: CAPPlugin, CAPBridgedPlugin {
 final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate {
     var onFinish: ((CapturedRoom?, Error?) -> Void)?
     private let arSession: ARSession
-    private let titleText: String
+    private var titleText = ""
     private var captureView: RoomCaptureView!
     private var result: CapturedRoom?
     private var scanning = false
@@ -147,10 +156,22 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate {
     private let cancelButton = UIButton(type: .system)
     private let titleLabel = UILabel()
 
-    init(arSession: ARSession, title: String) {
+    init(arSession: ARSession) {
         self.arSession = arSession
-        self.titleText = title
         super.init(nibName: nil, bundle: nil)
+    }
+
+    /// Ready for the next room (the same capture view and AR session are reused).
+    func prepare(title: String) {
+        titleText = title
+        result = nil
+        scanning = false
+        finished = false
+        if isViewLoaded {
+            titleLabel.text = title
+            doneButton.configuration?.title = "Done"
+            doneButton.isEnabled = true
+        }
     }
     required init?(coder: NSCoder) { fatalError("not used") }
 
@@ -193,6 +214,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         guard !scanning && !finished && result == nil else { return }
+        titleLabel.text = titleText
         scanning = true
         UIApplication.shared.isIdleTimerDisabled = true
         captureView.captureSession.run(configuration: RoomCaptureSession.Configuration())
