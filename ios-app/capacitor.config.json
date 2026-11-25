@@ -1,0 +1,13 @@
+{
+  "appId": "com.jamull611.claimtracker",
+  "appName": "Claim Tracker",
+  "webDir": "www",
+  "server": {
+    "url": "https://jamull611.github.io/Flood/adjuster-claim-tracker.html",
+    "errorPath": "index.html",
+    "allowNavigation": ["jamull611.github.io"]
+  },
+  "ios": {
+    "contentInset": "automatic"
+  }
+}
