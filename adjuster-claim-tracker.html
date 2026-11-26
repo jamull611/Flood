@@ -2628,7 +2628,7 @@ $('#textCopy').addEventListener('click', async () => {
 // ---------- settings ----------
 ['sheetFirm', 'sheetAddress'].forEach(id => $('#' + id).addEventListener('input', e => { S()[id] = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); }));
 // Version: bump together with CACHE in sw.js on every release.
-const APP_VERSION = 33;
+const APP_VERSION = 34;
 $('#appVersion').textContent = APP_VERSION;
 $('#photoStyle').addEventListener('input', e => { S().photoStyle = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); });
 function renderSettings() {
@@ -4655,14 +4655,15 @@ window.TRACKER_CONFIG = {
   // doors, windows and openings kept on their walls (edge number e, position t from 0 to 1 along it, width w).
   function geom(r) {
     const E = r.edit; if (!E) return r;
-    const P = E.poly, n = P.length, h = E.h;
+    const P = E.poly, n = P.length, h = E.h, inner = E.inner || [];
+    const edges = P.map((a, i) => [a, P[(i + 1) % n]]).concat(inner.map(w => [w.a, w.b]));
     const on = d => {
-      const a = P[d.e], b = P[(d.e + 1) % n], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L;
+      const [a, b] = edges[d.e], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L;
       const cx = a[0] + (b[0] - a[0]) * d.t, cy = a[1] + (b[1] - a[1]) * d.t, hw = Math.min(d.w, L) / 2;
       return { ...d, a: [cx - ux * hw, cy - uy * hw], b: [cx + ux * hw, cy + uy * hw] };
     };
-    const ok = d => d.e < n;
-    return { ...r, floors: [P], walls: P.map((a, i) => { const b = P[(i + 1) % n]; return { a, b, w: Math.hypot(b[0] - a[0], b[1] - a[1]), h, y: h / 2 }; }),
+    const ok = d => d.e < edges.length;
+    return { ...r, floors: [P], walls: edges.map(([a, b]) => ({ a, b, w: Math.hypot(b[0] - a[0], b[1] - a[1]), h, y: h / 2 })),
       doors: (E.doors || []).filter(ok).map(on), windows: (E.windows || []).filter(ok).map(on), openings: (E.openings || []).filter(ok).map(on), objects: E.objects || [] };
   }
   const outline = r => { const g = geom(r), f = (g.floors || []).filter(p => p.length >= 3).sort((a, b) => area(b) - area(a))[0]; return f || hull((g.walls || []).flatMap(w => [w.a, w.b])); };
@@ -4727,6 +4728,25 @@ window.TRACKER_CONFIG = {
     return { items, x0: B.x0, y0: B.y0, W: Math.max(B.x1 - B.x0, 1), H: Math.max(B.y1 - B.y0, 1) };
   }
 
+  // Stretches of the floor's edge with no wall, door, window or opening along them: walls the scanner missed.
+  const segDist = (p, a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2)); return Math.hypot(a[0] + dx * t - p[0], a[1] + dy * t - p[1]); };
+  function gaps(t) {
+    const P = t.outline; if (P.length < 3) return [];
+    const segs = [...t.walls, ...t.doors, ...t.windows, ...t.openings];
+    const out = [];
+    P.forEach((a, i) => {
+      const b = P[(i + 1) % P.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.max(2, Math.ceil(L / 0.1));
+      let run = null;
+      for (let k = 0; k <= n; k++) {
+        const f = k / n, p = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+        const covered = segs.some(s => segDist(p, s.a, s.b) < 0.15);
+        if (!covered) { if (!run) run = [p, p]; else run[1] = p; }
+        if ((covered || k === n) && run) { if (Math.hypot(run[1][0] - run[0][0], run[1][1] - run[0][1]) >= 0.3) out.push(run); run = null; }
+      }
+    });
+    return out;
+  }
+
   // Drawing as simple shapes, so the screen (SVG) and the PDF draw the same thing.
   function shapes(lay, sel, edit, join) {
     const S = [];
@@ -4738,7 +4758,8 @@ window.TRACKER_CONFIG = {
     }));
     lay.items.forEach(t => t.walls.forEach(w => S.push({ id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#1f2937', w: 0.12 })));
     lay.items.forEach(t => {
-      t.openings.forEach(w => S.push({ id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#ffffff', w: 0.14 }, { id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#9aa3af', w: 0.03, dash: true }));
+      t.openings.forEach(w => S.push({ id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#ffffff', w: 0.14 }, { id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#6b7280', w: 0.05, dash: true }));
+      if (!t.r.edit) gaps(t).forEach(([a, b]) => S.push({ id: t.r.id, k: 'line', a, b, stroke: '#f97316', w: 0.06, dash: true, gap: true }));
       t.doors.forEach(w => S.push({ id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#ffffff', w: 0.14 }, { id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#a0522d', w: 0.05 }));
       t.windows.forEach(w => S.push({ id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#ffffff', w: 0.10 }, { id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: '#2b7bd6', w: 0.04 }));
     });
@@ -4768,6 +4789,7 @@ window.TRACKER_CONFIG = {
       S.push({ id: t.r.id, k: 'text', at: [c[0], c[1] - 0.12], text: t.r.name || 'Room', size: 0.32, color: '#111827', bold: true });
       S.push({ id: t.r.id, k: 'text', at: [c[0], c[1] + 0.3], text: `${n0(metrics(t.r).floor)} SF`, size: 0.24, color: '#4b5563' });
       if (edit && t.r.id === sel) t.outline.forEach((p, i) => S.push({ id: t.r.id, k: 'circle', at: p, rad: 0.17, fill: '#f59e0b', tag: 'corner-' + i }));
+      if (edit && t.r.id === sel && wallStart) S.push({ id: t.r.id, k: 'circle', at: wallStart, rad: 0.14, fill: '#16a34a' });
     });
     return S;
   }
@@ -4780,7 +4802,7 @@ window.TRACKER_CONFIG = {
       if (s.k === 'circle') return `<circle ${id} cx="${s.at[0]}" cy="${s.at[1]}" r="${s.rad}" fill="${s.fill}" stroke="#fff" stroke-width="0.04"/>`;
       if (s.k === 'poly') return `<polygon ${id} points="${s.pts.map(P).join(' ')}" fill="${s.fill || 'none'}" ${s.stroke ? `stroke="${s.stroke}" stroke-width="${s.w}"` : ''}/>`;
       if (s.k === 'line') return `<line ${id} x1="${s.a[0]}" y1="${s.a[1]}" x2="${s.b[0]}" y2="${s.b[1]}" stroke="${s.stroke}" stroke-width="${s.w}" stroke-linecap="${s.dash ? 'butt' : 'square'}" ${s.dash ? 'stroke-dasharray="0.12 0.08"' : ''}/>`;
-      return `<text ${id} x="${s.at[0]}" y="${s.at[1]}" font-size="${s.size}" fill="${s.color}" text-anchor="middle" dominant-baseline="middle" ${s.bold ? 'font-weight="700"' : ''} ${s.rot ? `transform="rotate(${s.rot.toFixed(1)} ${s.at[0]} ${s.at[1]})"` : ''}>${esc(s.text)}</text>`;
+      return `<text ${id} ${s.tag ? '' : 'pointer-events="none"'} x="${s.at[0]}" y="${s.at[1]}" font-size="${s.size}" fill="${s.color}" text-anchor="middle" dominant-baseline="middle" ${s.bold ? 'font-weight="700"' : ''} ${s.rot ? `transform="rotate(${s.rot.toFixed(1)} ${s.at[0]} ${s.at[1]})"` : ''}>${esc(s.text)}</text>`;
     }).join('');
     return `<svg class="sk-plan" data-level="${esc(level || '')}" viewBox="${vb}" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif">${body}</svg>`;
   }
@@ -4849,8 +4871,8 @@ window.TRACKER_CONFIG = {
     const tools = editing ? `<div class="sk-tools">${!selR ? '<span class="small"><b>Tap a room</b> to edit it.</span>' : `
         <span class="small">Editing <b>${esc(selR.name || 'Room')}</b>: drag the orange corners, tap a wall length to type it, tap a door, window or item to remove it.</span>
         <label class="small">Ceiling height <input id="skHeight" value="${esc(ftIn(selR.edit ? selR.edit.h : metrics(selR).height))}" style="width:80px"></label>
-        ${['door', 'window', 'opening'].map(k => `<button type="button" class="btn small ${addKind === k ? 'primary' : ''}" data-add="${k}">＋ ${k[0].toUpperCase() + k.slice(1)}</button>`).join('')}
-        ${addKind ? `<span class="small"><b>Tap a wall</b> to put the ${addKind} there.</span>` : ''}
+        ${['wall', 'door', 'window', 'opening'].map(k => `<button type="button" class="btn small ${addKind === k ? 'primary' : ''}" data-add="${k}">＋ ${k[0].toUpperCase() + k.slice(1)}</button>`).join('')}
+        ${addKind === 'wall' ? `<span class="small"><b>${wallStart ? 'Tap where the wall ends' : 'Tap where the wall starts'}</b> (it snaps to corners and walls).</span>` : addKind ? `<span class="small"><b>Tap a wall</b> to put the ${addKind} there.</span>` : ''}
         <button type="button" class="btn small" data-undo ${undo.length ? '' : 'disabled'}>↶ Undo</button>
         <button type="button" class="btn small" data-unedit>Back to the scan</button>`}</div>`
       : !arrange ? '' : joining ? `<div class="sk-tools"><span class="small">🚪 ${joinFirst ? `<b>Now tap the matching door</b> in the room to move. ${esc((rooms(c).find(r => r.id === joinFirst.room) || {}).name || 'That room')} stays put.` : '<b>Tap a door</b> (green) in the room that stays put.'}</span>
@@ -4867,6 +4889,7 @@ window.TRACKER_CONFIG = {
       const tot = rs.reduce((a, r) => { const m = metrics(r); a.floor += m.floor; a.walls += m.walls; a.perim += m.perim; return a; }, { floor: 0, walls: 0, perim: 0 });
       const wl = ((c.sketch.water || {})[lvl]) || '';
       return `<div class="row" style="margin:14px 0 6px;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px"><h4 style="margin:0">${esc(lvl)} <span class="count">${rs.length} room${rs.length === 1 ? '' : 's'} · ${n0(tot.floor)} SF</span></h4>
+        ${rs.some(r => !r.edit && layout([r]).items.some(t => gaps(t).length)) ? '<span class="small" style="color:#c2410c">Orange dashes: no wall found. Tap ✏️ Edit rooms, then the room, to close them.</span>' : ''}
         <label class="small sk-water">Interior water line <input data-water="${esc(lvl)}" value="${esc(String(wl))}" inputmode="decimal" placeholder="in."> in.</label></div>
         ${svg(layout(rs), lvl, arrange || editing ? selId : null, null, editing, arrange && joining ? (joinFirst || {}) : null)}
         <div class="sk-tablewrap"><table><thead><tr><th>Room</th><th>Floor SF</th><th>Wall SF</th><th>Ceiling SF</th><th>Floor perimeter LF</th><th>Ceiling height</th><th>Doors</th><th>Windows</th></tr></thead><tbody>
@@ -5079,6 +5102,13 @@ window.TRACKER_CONFIG = {
     }
     return Q;
   };
+  const nearestSeg = (edges, m) => {
+    let best = { e: 0, t: 0.5, d: Infinity };
+    edges.forEach(([a, b], i) => { const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+      const t = Math.max(0, Math.min(1, ((m[0] - a[0]) * dx + (m[1] - a[1]) * dy) / L2)), d = Math.hypot(a[0] + dx * t - m[0], a[1] + dy * t - m[1]);
+      if (d < best.d) best = { e: i, t, d }; });
+    return best;
+  };
   const nearestEdge = (P, m) => {
     let best = { e: 0, t: 0.5, d: Infinity };
     P.forEach((a, i) => { const b = P[(i + 1) % P.length], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
@@ -5090,11 +5120,14 @@ window.TRACKER_CONFIG = {
   function bake(r) {
     const lvl = r.level || 'Main Level'; freeze(lvl);
     const t = layout(levelRooms(lvl)).items.find(x => x.r === r); if (!t) return;
-    if (r.edit) { r.edit = { ...r.edit, poly: t.outline, objects: t.objects }; }
+    if (r.edit) { r.edit = { ...r.edit, poly: t.outline, inner: t.walls.slice(t.outline.length).map(w => ({ a: w.a, b: w.b })), objects: t.objects }; }
     else {
       const P = simplify(t.outline.length >= 3 ? t.outline : hull(ptsOf(t)));
-      const pin = list => list.map(w => { const m = [(w.a[0] + w.b[0]) / 2, (w.a[1] + w.b[1]) / 2], ne = nearestEdge(P, m); return { e: ne.e, t: ne.t, w: w.w, h: w.h, y: w.y, open: w.open }; });
-      r.edit = { poly: P, h: metrics(r).height || 2.44, doors: pin(t.doors), windows: pin(t.windows), openings: pin(t.openings), objects: t.objects };
+      // walls inside the outline (a scan that took in several rooms) are kept as inside walls
+      const inner = t.walls.filter(w => { const m = [(w.a[0] + w.b[0]) / 2, (w.a[1] + w.b[1]) / 2]; return nearestEdge(P, m).d > 0.3; }).map(w => ({ a: w.a, b: w.b }));
+      const edges = P.map((a, i) => [a, P[(i + 1) % P.length]]).concat(inner.map(w => [w.a, w.b]));
+      const pin = list => list.map(w => { const m = [(w.a[0] + w.b[0]) / 2, (w.a[1] + w.b[1]) / 2], ne = nearestSeg(edges, m); return { e: ne.e, t: ne.t, w: w.w, h: w.h, y: w.y, open: w.open }; });
+      r.edit = { poly: P, inner, h: metrics(r).height || 2.44, doors: pin(t.doors), windows: pin(t.windows), openings: pin(t.openings), objects: t.objects };
     }
     r.place = { dx: 0, dy: 0, rot: 0, base: 0 };
   }
@@ -5132,18 +5165,52 @@ window.TRACKER_CONFIG = {
     const move = n > 3 ? [(i + 1) % n, (i + 2) % n] : [(i + 1) % n];
     for (const j of move) P[j] = [P[j][0] + dx, P[j][1] + dy];
   }
+  // ＋ Wall: tap where it starts, then where it ends. Ends snap to corners and walls nearby, and a wall that's
+  // nearly straight across or up and down is made exactly so.
+  const edgesOf = r => { const P = r.edit.poly; return P.map((a, i) => [a, P[(i + 1) % P.length]]).concat((r.edit.inner || []).map(w => [w.a, w.b])); };
+  let wallStart = null;
+  function snapPoint(r, p) {
+    const pts = [...r.edit.poly, ...(r.edit.inner || []).flatMap(w => [w.a, w.b])];
+    let best = null; for (const q of pts) { const d = Math.hypot(q[0] - p[0], q[1] - p[1]); if (d < 0.3 && (!best || d < best.d)) best = { q, d }; }
+    if (best) return [...best.q];
+    const ne = nearestSeg(edgesOf(r), p); if (ne.d < 0.25) { const [a, b] = edgesOf(r)[ne.e]; return [a[0] + (b[0] - a[0]) * ne.t, a[1] + (b[1] - a[1]) * ne.t]; }
+    return p;
+  }
+  function wallTap(e) {
+    const sv = e.target.closest('svg.sk-plan'), r = rooms(claim()).find(x => x.id === selId); if (!sv || !r || !r.edit) return;
+    const pt = svgPoint(sv, e); let p = snapPoint(r, [pt.x, pt.y]);
+    if (!wallStart) { wallStart = p; render(); status('Now tap where the wall ends.'); return; }
+    const a = wallStart, dx = p[0] - a[0], dy = p[1] - a[1];
+    if (Math.abs(dy) < Math.abs(dx) * 0.15) p = snapPoint(r, [p[0], a[1]]), p[1] = a[1];
+    else if (Math.abs(dx) < Math.abs(dy) * 0.15) p = snapPoint(r, [a[0], p[1]]), p[0] = a[0];
+    wallStart = null;
+    if (Math.hypot(p[0] - a[0], p[1] - a[1]) < 0.2) { render(); status('That wall was too short. Tap ＋ Wall to try again.'); addKind = null; return; }
+    snapshot(r); (r.edit.inner = r.edit.inner || []).push({ a, b: p }); addKind = null; save(); render();
+    status(`✓ Wall added (${ftIn(Math.hypot(p[0] - a[0], p[1] - a[1]))}).`);
+  }
+
   $('#skBody').addEventListener('click', e => {
     if (!editing) return;
+    if (addKind === 'wall') return wallTap(e);
     const el = e.target.closest('[data-tag]'), r = rooms(claim()).find(x => x.id === selId);
     if (!el || !r || !r.edit || el.dataset.room !== r.id) return;
     const tag = el.dataset.tag, [kind, num] = [tag.replace(/-\d+$/, ''), +tag.split('-').pop()];
     if (addKind && (kind === 'wall' || kind === 'len')) {
-      const P = r.edit.poly, sv = el.closest('svg'), pt = svgPoint(sv, e), ne = nearestEdge(P, [pt.x, pt.y]);
+      const sv = el.closest('svg'), pt = svgPoint(sv, e), E = edgesOf(r), ne = nearestSeg([E[num]], [pt.x, pt.y]);
       snapshot(r);
       const w = { door: 0.81, window: 0.91, opening: 0.91 }[addKind];
       r.edit[addKind + 's'] = r.edit[addKind + 's'] || [];
-      r.edit[addKind + 's'].push({ e: kind === 'len' ? num : ne.e, t: kind === 'len' ? 0.5 : ne.t, w, h: addKind === 'window' ? 1.2 : 2.03 });
+      r.edit[addKind + 's'].push({ e: num, t: kind === 'len' ? 0.5 : ne.t, w, h: addKind === 'window' ? 1.2 : 2.03 });
       addKind = null; save(); render(); return;
+    }
+    if ((kind === 'len' || kind === 'wall') && num >= r.edit.poly.length) {
+      // an inside wall: remove it (doors on it go with it)
+      if (!confirm('Remove this inside wall?')) return;
+      snapshot(r);
+      const j = num - r.edit.poly.length;
+      r.edit.inner.splice(j, 1);
+      for (const k of ['doors', 'windows', 'openings']) r.edit[k] = (r.edit[k] || []).filter(d => d.e !== num).map(d => d.e > num ? { ...d, e: d.e - 1 } : d);
+      save(); render(); return;
     }
     if (kind === 'len' || kind === 'wall') {
       const P = r.edit.poly, a = P[num], b = P[(num + 1) % P.length];
@@ -5165,7 +5232,7 @@ window.TRACKER_CONFIG = {
   });
   $('#skBody').addEventListener('click', e => {
     const r = rooms(claim()).find(x => x.id === selId);
-    const ad = e.target.closest('[data-add]'); if (ad) { addKind = addKind === ad.dataset.add ? null : ad.dataset.add; render(); return; }
+    const ad = e.target.closest('[data-add]'); if (ad) { addKind = addKind === ad.dataset.add ? null : ad.dataset.add; wallStart = null; render(); return; }
     if (e.target.closest('[data-undo]')) {
       const u = undo.pop(); if (!u) return; const x = rooms(claim()).find(y => y.id === u.id); if (!x) return;
       const ed = JSON.parse(u.edit), pl = JSON.parse(u.place); if (ed) x.edit = ed; else delete x.edit; if (pl) x.place = pl; else delete x.place;

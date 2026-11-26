@@ -186,7 +186,10 @@ The iPad app (`ios-app/`) is the same tracker, plus Apple's room scanner (RoomPl
 5. **✏️ Edit rooms**: tap a room, then drag its orange corners (they line up with the next corner to keep walls
    square), tap a wall length to type it (e.g. `12' 6"`; the room stretches and stays square), set the ceiling
    height, add a door, window or opening by tapping a wall, and tap a door, window or item to remove it.
+   **＋ Wall**: tap where a wall starts and ends (it snaps to corners and walls and straightens); tap an inside
+   wall to remove it. Inside walls of a scan that took in several rooms are kept.
    **↶ Undo** steps back; **Back to the scan** throws the edits away.
+   Orange dashes on the plan mark the floor's edge where the scanner found no wall; editing the room closes them.
 6. **Interior water line** (per level, in inches): items the scanner found that sit below it are marked damaged
    on the contents list.
 7. **📦 Contents** (Report tab): one line per kind of item per room from the scan (bed, sofa, chair, table, TV,
