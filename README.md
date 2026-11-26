@@ -175,6 +175,10 @@ The iPad app (`ios-app/`) is the same tracker, plus Apple's room scanner (RoomPl
    (a photo each time you move about a meter or turn, up to 40 per room). The photos are added to the claim's
    **Photos** page labeled with the level and room, caption starting "Showing damages to the <room>." Tick
    **Record a video of the scan** to save a video of each room's scan to the iPad's Photos app.
+   **✋ Pick walls** measures a room your way instead: aim the circle at a wall and tap **＋ Add wall**, going around
+   the room in order. Each wall is a straight line from three LiDAR points, corners are where walls meet, and walls
+   near a right angle are made exactly square. **Door / Window / Opening**: tap each side. **Ceiling**: aim up and
+   tap (8' if skipped). A live plan in the corner shows the room as you go.
 2. Each room is saved on the claim and synced: walls, doors, windows, openings and fixtures, named from what the
    scanner recognized (Kitchen, Bathroom…). Rename a room or change its level in the list.
 3. The screen shows the floor plan for each level with wall lengths, plus floor SF, wall SF (gross), ceiling SF,

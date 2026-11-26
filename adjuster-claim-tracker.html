@@ -2628,7 +2628,7 @@ $('#textCopy').addEventListener('click', async () => {
 // ---------- settings ----------
 ['sheetFirm', 'sheetAddress'].forEach(id => $('#' + id).addEventListener('input', e => { S()[id] = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); }));
 // Version: bump together with CACHE in sw.js on every release.
-const APP_VERSION = 35;
+const APP_VERSION = 36;
 $('#appVersion').textContent = APP_VERSION;
 $('#photoStyle').addEventListener('input', e => { S().photoStyle = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); });
 function renderSettings() {
@@ -4621,7 +4621,7 @@ window.TRACKER_CONFIG = {
   const JSPDF_URL = 'https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js';
   const LEVELS = ['Basement', 'Main Level', 'Upper Level', 'Attic', 'Crawlspace', 'Garage'];
   const FT = 3.28084, SF = 10.7639, IN = 0.0254;
-  let claimId = null, canScan = false, scanning = false, arrange = false, editing = false, addKind = null, selId = null, joining = false, joinFirst = null;
+  let claimId = null, canScan = false, canPick = false, scanning = false, arrange = false, editing = false, addKind = null, selId = null, joining = false, joinFirst = null;
   const undo = [];
   // What the scanner recognizes. cov: a starting guess for Contents or Building coverage; change it on the list.
   const ITEM = {
@@ -4856,11 +4856,13 @@ window.TRACKER_CONFIG = {
     $('#skScanBox').innerHTML = canScan
       ? `<div class="box" style="margin-bottom:10px"><div class="row" style="margin:0;gap:8px;flex-wrap:wrap;align-items:center">
           <label class="small">Level <select id="skLevel">${[...new Set([...LEVELS, ...list.map(r => r.level)])].map(l => `<option ${l === lastLevel() ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
-          <button type="button" class="btn primary" id="skScan" ${scanning ? 'disabled' : ''}>＋ Scan a room</button></div>
+          <button type="button" class="btn primary" id="skScan" ${scanning ? 'disabled' : ''}>＋ Scan a room</button>
+          <button type="button" class="btn" id="skPick" ${scanning || !canPick ? 'disabled' : ''} title="${canPick ? '' : 'Update the app from TestFlight to use this'}">✋ Pick walls</button></div>
           <div class="row" style="margin:8px 0 0;gap:14px;flex-wrap:wrap">
             <label class="small"><input type="checkbox" id="skAutoPh" ${opt('autoPhotos') ? 'checked' : ''}> 📷 Take photos automatically while scanning</label>
             <label class="small"><input type="checkbox" id="skRec" ${opt('record') ? 'checked' : ''}> 🎥 Record a video of the scan (saved to the Photos app)</label></div>
-          <div class="small muted" style="margin-top:6px">Stand in the doorway, tap Scan, and slowly walk the room pointing the iPad at the walls. Tap Done, then Save room. Scan the rooms one after another without closing the app and they line up on the plan. Tap the white 📷 button any time to take a photo; photos go to this claim's Photos, labeled with the room.</div></div>`
+          <div class="small muted" style="margin-top:6px">Stand in the doorway, tap Scan, and slowly walk the room pointing the iPad at the walls. Tap Done, then Save room. Scan the rooms one after another without closing the app and they line up on the plan. Tap the white 📷 button any time to take a photo; photos go to this claim's Photos, labeled with the room.
+          <br><b>✋ Pick walls</b> measures a room your way: aim the circle at each wall in turn around the room and tap Add wall; doors and windows by tapping each side.</div></div>`
       : `<div class="small muted" style="margin-bottom:10px">${IOS ? 'This iPad has no LiDAR scanner, so it can\'t scan rooms. Scans made on a LiDAR iPad show up here.' : 'Rooms are scanned with the Claim Tracker app on your LiDAR iPad. Scans sync here, where you can see the floor plan and print it.'}</div>`;
     $('#skPdf').disabled = $('#skRooms').disabled = $('#skMove').disabled = $('#skEdit').disabled = !list.length;
     if (!list.length) arrange = editing = false;
@@ -4967,8 +4969,30 @@ window.TRACKER_CONFIG = {
     } finally { scanning = false; render(); }
   }
 
+  // ✋ Pick walls: the room is measured from the walls you point at, already straight and square.
+  async function pick() {
+    const c = claim(); if (!c || scanning) return;
+    const level = $('#skLevel').value; try { localStorage.setItem('adjusterClaimTracker.scanLevel', level); } catch { }
+    scanning = true; render(); status('Picking walls…');
+    try {
+      const res = await N('pickWalls', { title: `${level}: room ${rooms(c).filter(r => r.level === level).length + 1}` });
+      const r = res.room, c2 = claimById(claimId);
+      const room = { id: 'r' + Date.now().toString(36), name: nameFor(c2, r, level), level, session: r.session, scannedAt: new Date().toISOString(), picked: true,
+        walls: r.walls, doors: r.doors, windows: r.windows, openings: r.openings, objects: [], floors: r.floors, floorY: r.floorY };
+      rooms(c2).push(room); syncRoomList(c2); save();
+      const m = metrics(room);
+      status(`✓ Saved <b>${esc(room.name)}</b>: ${n0(m.floor)} SF floor, ${room.walls.length} walls, ${m.doors} doors, ${m.windows} windows. Name it below.`);
+      render();
+      const inp = dlg.querySelector(`[data-id="${room.id}"] [data-f="name"]`); if (inp) { inp.focus(); inp.select(); }
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      status(/cancel/i.test(msg) ? 'Cancelled.' : `<span class="stale-warn">${esc(msg)}</span>`);
+    } finally { scanning = false; render(); }
+  }
+
   dlg.addEventListener('click', e => {
     if (e.target.id === 'skScan') return scan();
+    if (e.target.id === 'skPick') return pick();
     const row = e.target.closest('[data-id]');
     if (row && e.target.closest('[data-del]')) {
       const c = claim(), r = rooms(c).find(x => x.id === row.dataset.id);
@@ -5393,7 +5417,7 @@ window.TRACKER_CONFIG = {
     claimId = id; const c = claim(); if (!c) return;
     $('#skWho').textContent = [c.insured, c.claimNo && '#' + c.claimNo].filter(Boolean).join(' · ');
     status('');
-    if (IOS) { try { const i = await N('info'); canScan = !!i.roomScan; $('#sk3d').hidden = !canScan; } catch { canScan = false; } }
+    if (IOS) { try { const i = await N('info'); canScan = !!i.roomScan; canPick = !!i.pickWalls; $('#sk3d').hidden = !canScan; } catch { canScan = false; } }
     render();
     if (!dlg.open) dlg.showModal();
   }
