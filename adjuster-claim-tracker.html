@@ -2628,7 +2628,7 @@ $('#textCopy').addEventListener('click', async () => {
 // ---------- settings ----------
 ['sheetFirm', 'sheetAddress'].forEach(id => $('#' + id).addEventListener('input', e => { S()[id] = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); }));
 // Version: bump together with CACHE in sw.js on every release.
-const APP_VERSION = 36;
+const APP_VERSION = 37;
 $('#appVersion').textContent = APP_VERSION;
 $('#photoStyle').addEventListener('input', e => { S().photoStyle = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); });
 function renderSettings() {
@@ -5509,6 +5509,36 @@ window.TRACKER_CONFIG = {
 
   window.contents = { open: openContents, count: c => ((c && c.contents) || []).length };
   window.sketch = { open, syncContents, ITEM, geom, count: c => ((c && c.sketch && c.sketch.rooms) || []).length, metrics, layout, roomListText };
+})();
+</script>
+<script>
+// Apple Pencil: a Pencil tap the page didn't turn into a click (some iPad set-ups) is clicked here; the iPad app
+// also reports Pencil taps it sees (window.__penTap). Either way a tap is only acted on once.
+(() => {
+  let lastClick = 0, lastPen = null;
+  document.addEventListener('click', () => { lastClick = Date.now(); }, true);
+  const act = el => {
+    if (!el) return;
+    const field = el.closest('input, textarea, select, [contenteditable]');
+    if (field) { field.focus(); if (field.type === 'checkbox' || field.type === 'radio') field.click(); return; }
+    (el.closest('button, a, label, summary, [data-tag], [data-room], [role=button]') || el).click();
+  };
+  document.addEventListener('pointerup', e => {
+    if (e.pointerType !== 'pen') return;
+    const t = e.target, at = Date.now(); lastPen = at;
+    setTimeout(() => { if (lastClick < at) act(t); }, 300);
+  }, true);
+  window.__penTap = (x, y) => {
+    const at = Date.now();
+    setTimeout(() => {
+      if (lastClick >= at - 50 || (lastPen && at - lastPen < 600)) return;
+      const el = document.elementFromPoint(x, y); if (!el) return;
+      const o = { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerType: 'pen', isPrimary: true };
+      el.dispatchEvent(new PointerEvent('pointerdown', o));
+      window.dispatchEvent(new PointerEvent('pointerup', o));
+      if (document.contains(el)) act(el);
+    }, 320);
+  };
 })();
 </script>
 <script>

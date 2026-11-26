@@ -12,10 +12,25 @@ import CoreImage
 import SceneKit
 
 /// The app's main screen: the tracker web page, with the TrackerNative plugin added.
-class MainViewController: CAPBridgeViewController {
+class MainViewController: CAPBridgeViewController, UIGestureRecognizerDelegate {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(TrackerNativePlugin())
+        // Apple Pencil: some taps never reach the web page, so catch Pencil taps here and hand them to the page,
+        // which taps whatever is under the tip (and ignores it if the page already got the tap itself).
+        let pen = UITapGestureRecognizer(target: self, action: #selector(penTap(_:)))
+        pen.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        pen.cancelsTouchesInView = false
+        pen.delegate = self
+        webView?.addGestureRecognizer(pen)
     }
+
+    @objc private func penTap(_ g: UITapGestureRecognizer) {
+        guard let wv = webView else { return }
+        let p = g.location(in: wv)
+        wv.evaluateJavaScript("window.__penTap && window.__penTap(\(p.x), \(p.y))", completionHandler: nil)
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 }
 
 @objc(TrackerNativePlugin)
