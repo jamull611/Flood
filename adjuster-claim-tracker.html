@@ -2628,7 +2628,7 @@ $('#textCopy').addEventListener('click', async () => {
 // ---------- settings ----------
 ['sheetFirm', 'sheetAddress'].forEach(id => $('#' + id).addEventListener('input', e => { S()[id] = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); }));
 // Version: bump together with CACHE in sw.js on every release.
-const APP_VERSION = 32;
+const APP_VERSION = 33;
 $('#appVersion').textContent = APP_VERSION;
 $('#photoStyle').addEventListener('input', e => { S().photoStyle = e.target.value; clearTimeout(renderSettings.t); renderSettings.t = setTimeout(save, 600); });
 function renderSettings() {
@@ -4621,7 +4621,7 @@ window.TRACKER_CONFIG = {
   const JSPDF_URL = 'https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js';
   const LEVELS = ['Basement', 'Main Level', 'Upper Level', 'Attic', 'Crawlspace', 'Garage'];
   const FT = 3.28084, SF = 10.7639, IN = 0.0254;
-  let claimId = null, canScan = false, scanning = false, arrange = false, editing = false, addKind = null, selId = null;
+  let claimId = null, canScan = false, scanning = false, arrange = false, editing = false, addKind = null, selId = null, joining = false, joinFirst = null;
   const undo = [];
   // What the scanner recognizes. cov: a starting guess for Contents or Building coverage; change it on the list.
   const ITEM = {
@@ -4715,7 +4715,7 @@ window.TRACKER_CONFIG = {
         const p = t.r.place;
         if (p) {
           const c = centroid(t.outline.length >= 3 ? t.outline : hull(ptsOf(t)));
-          items.push(xform(t, q => { const s = rot(q, c, (p.rot || 0) * Math.PI / 180); return [s[0] + p.dx, s[1] + p.dy]; }));
+          const it = xform(t, q => { const s = rot(q, c, (p.rot || 0) * Math.PI / 180); return [s[0] + p.dx, s[1] + p.dy]; }); it.pivot = c; items.push(it);
         } else {
           const it = xform(t, q => [q[0] + off[0], q[1] + off[1]]); it.auto = off; items.push(it);
         }
@@ -4728,7 +4728,7 @@ window.TRACKER_CONFIG = {
   }
 
   // Drawing as simple shapes, so the screen (SVG) and the PDF draw the same thing.
-  function shapes(lay, sel, edit) {
+  function shapes(lay, sel, edit, join) {
     const S = [];
     lay.items.forEach(t => { if (t.outline.length >= 3) S.push({ id: t.r.id, k: 'poly', pts: t.outline, fill: sel === t.r.id ? '#fde68a' : '#eef3fb' }); });
     lay.items.forEach(t => t.objects.forEach((o, i) => {
@@ -4744,6 +4744,12 @@ window.TRACKER_CONFIG = {
     });
     // editing: wide invisible strips over walls, doors and windows so a finger can hit them
     const T = 'rgba(0,0,0,0)';
+    // joining rooms at a door: every door and opening can be tapped; the first one picked shows green
+    if (join) lay.items.forEach(t => ['doors', 'openings'].forEach(kind => t[kind].forEach((w, i) => {
+      const picked = join.room === t.r.id && join.kind === kind.slice(0, -1) && join.i === i;
+      S.push({ id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: picked ? '#16a34a' : 'rgba(22,163,74,0.35)', w: picked ? 0.16 : 0.12 });
+      S.push({ id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: T, w: 0.5, tag: kind.slice(0, -1) + '-' + i });
+    })));
     lay.items.filter(t => edit && t.r.id === sel).forEach(t => {
       t.walls.forEach((w, i) => S.push({ id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: T, w: 0.4, tag: 'wall-' + i }));
       for (const kind of ['openings', 'doors', 'windows']) t[kind].forEach((w, i) => S.push({ id: t.r.id, k: 'line', a: w.a, b: w.b, stroke: T, w: 0.45, tag: kind.slice(0, -1) + '-' + i }));
@@ -4766,10 +4772,10 @@ window.TRACKER_CONFIG = {
     return S;
   }
 
-  function svg(lay, level, sel, vb0, edit) {
+  function svg(lay, level, sel, vb0, edit, join) {
     const pad = 0.8, vb = vb0 || `${(lay.x0 - pad).toFixed(3)} ${(lay.y0 - pad).toFixed(3)} ${(lay.W + 2 * pad).toFixed(3)} ${(lay.H + 2 * pad).toFixed(3)}`;
     const P = a => `${a[0].toFixed(3)},${a[1].toFixed(3)}`;
-    const body = shapes(lay, sel, edit).map(s => {
+    const body = shapes(lay, sel, edit, join).map(s => {
       const id = (s.id ? `data-room="${esc(s.id)}"` : '') + (s.tag ? ` data-tag="${s.tag}"` : '');
       if (s.k === 'circle') return `<circle ${id} cx="${s.at[0]}" cy="${s.at[1]}" r="${s.rad}" fill="${s.fill}" stroke="#fff" stroke-width="0.04"/>`;
       if (s.k === 'poly') return `<polygon ${id} points="${s.pts.map(P).join(' ')}" fill="${s.fill || 'none'}" ${s.stroke ? `stroke="${s.stroke}" stroke-width="${s.w}"` : ''}/>`;
@@ -4847,7 +4853,10 @@ window.TRACKER_CONFIG = {
         ${addKind ? `<span class="small"><b>Tap a wall</b> to put the ${addKind} there.</span>` : ''}
         <button type="button" class="btn small" data-undo ${undo.length ? '' : 'disabled'}>↶ Undo</button>
         <button type="button" class="btn small" data-unedit>Back to the scan</button>`}</div>`
-      : !arrange ? '' : `<div class="sk-tools"><span class="small"><b>Drag a room</b> to move it (it snaps to nearby walls). <b>Tap a room</b> to turn it.</span>
+      : !arrange ? '' : joining ? `<div class="sk-tools"><span class="small">🚪 ${joinFirst ? `<b>Now tap the matching door</b> in the room to move. ${esc((rooms(c).find(r => r.id === joinFirst.room) || {}).name || 'That room')} stays put.` : '<b>Tap a door</b> (green) in the room that stays put.'}</span>
+        <button type="button" class="btn small" data-joincancel>Cancel</button></div>`
+      : `<div class="sk-tools"><span class="small"><b>Drag a room</b> to move it (it snaps to nearby walls). <b>Tap a room</b> to turn it.</span>
+      <button type="button" class="btn small primary" data-join>🚪 Join at a door</button>
       ${selR ? `<span class="small">Selected: <b>${esc(selR.name || 'Room')}</b></span>
         <button type="button" class="btn small" data-turn="-90">↺ 90°</button><button type="button" class="btn small" data-turn="90">↻ 90°</button>
         <button type="button" class="btn small" data-turn="-2">⟲ 2°</button><button type="button" class="btn small" data-turn="2">⟳ 2°</button>
@@ -4859,7 +4868,7 @@ window.TRACKER_CONFIG = {
       const wl = ((c.sketch.water || {})[lvl]) || '';
       return `<div class="row" style="margin:14px 0 6px;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px"><h4 style="margin:0">${esc(lvl)} <span class="count">${rs.length} room${rs.length === 1 ? '' : 's'} · ${n0(tot.floor)} SF</span></h4>
         <label class="small sk-water">Interior water line <input data-water="${esc(lvl)}" value="${esc(String(wl))}" inputmode="decimal" placeholder="in."> in.</label></div>
-        ${svg(layout(rs), lvl, arrange || editing ? selId : null, null, editing)}
+        ${svg(layout(rs), lvl, arrange || editing ? selId : null, null, editing, arrange && joining ? (joinFirst || {}) : null)}
         <div class="sk-tablewrap"><table><thead><tr><th>Room</th><th>Floor SF</th><th>Wall SF</th><th>Ceiling SF</th><th>Floor perimeter LF</th><th>Ceiling height</th><th>Doors</th><th>Windows</th></tr></thead><tbody>
         ${rs.map(r => { const m = metrics(r); return `<tr><td>${esc(r.name || 'Room')}</td><td>${n0(m.floor)}</td><td>${n0(m.walls)}</td><td>${n0(m.ceiling)}</td><td>${n0(m.perim)}</td><td>${m.height ? ftIn(m.height) : ''}</td><td>${m.doors}</td><td>${m.windows}</td></tr>`; }).join('')}
         <tr><td><b>Total</b></td><td><b>${n0(tot.floor)}</b></td><td><b>${n0(tot.walls)}</b></td><td><b>${n0(tot.floor)}</b></td><td><b>${n0(tot.perim)}</b></td><td></td><td></td><td></td></tr></tbody></table></div>
@@ -4981,6 +4990,7 @@ window.TRACKER_CONFIG = {
   $('#skBody').addEventListener('pointerdown', e => {
     if (editing) return editDown(e);
     if (!arrange) return;
+    if (joining) return joinDown(e);
     const el = e.target.closest('[data-room]'), sv = e.target.closest('svg.sk-plan'); if (!el || !sv) return;
     e.preventDefault();
     const lvl = sv.dataset.level; freeze(lvl);
@@ -4999,7 +5009,7 @@ window.TRACKER_CONFIG = {
     drag.sv.outerHTML = html; drag.sv = $('#skBody').querySelector(`svg.sk-plan[data-level="${CSS.escape(drag.lvl)}"]`);
   });
   window.addEventListener('pointerup', () => { if (!drag) return; const d = drag; drag = null; if (d.corner != null && !d.moved) { undo.pop(); return; } if (d.corner != null) syncContents(claim()); save(); render(); });
-  $('#skMove').addEventListener('click', () => { arrange = !arrange; editing = false; addKind = null; if (!arrange) selId = null; render(); });
+  $('#skMove').addEventListener('click', () => { arrange = !arrange; editing = false; joining = false; joinFirst = null; addKind = null; if (!arrange) selId = null; render(); });
   $('#skBody').addEventListener('click', e => {
     const b = e.target.closest('[data-turn]');
     if (b) {
@@ -5015,6 +5025,47 @@ window.TRACKER_CONFIG = {
       targets.forEach(x => delete x.place); save(); render();
     }
   });
+  // ---------- joining two rooms at the same door ----------
+  // Tap a door in the room that stays put, then the matching door in the other room: the second room turns
+  // and slides so the two doors face each other across a wall.
+  const WALL = 0.12;
+  function doorAt(lvl, pick) {
+    const t = layout(levelRooms(lvl)).items.find(x => x.r.id === pick.room); if (!t) return null;
+    const d = t[pick.kind + 's'][pick.i]; if (!d) return null;
+    const m = [(d.a[0] + d.b[0]) / 2, (d.a[1] + d.b[1]) / 2], dx = d.b[0] - d.a[0], dy = d.b[1] - d.a[1], L = Math.hypot(dx, dy) || 1;
+    let n = [-dy / L, dx / L]; const c = centroid(t.outline.length >= 3 ? t.outline : hull(ptsOf(t)));
+    if ((m[0] - c[0]) * n[0] + (m[1] - c[1]) * n[1] < 0) n = [-n[0], -n[1]];
+    return { t, m, n };
+  }
+  function joinRooms(lvl, A, B) {
+    freeze(lvl);
+    const a = doorAt(lvl, A), b = doorAt(lvl, B); if (!a || !b) return false;
+    const p = b.t.r.place, piv = b.t.pivot || [0, 0];
+    const theta = Math.atan2(-a.n[1], -a.n[0]) - Math.atan2(b.n[1], b.n[0]);
+    const rot0 = (p.rot || 0) * Math.PI / 180, rot1 = rot0 + theta;
+    const q = rot([b.m[0] - p.dx, b.m[1] - p.dy], piv, -rot0), s1 = rot(q, piv, rot1);
+    const target = [a.m[0] + a.n[0] * WALL, a.m[1] + a.n[1] * WALL];
+    p.rot = ((rot1 * 180 / Math.PI) % 360 + 360) % 360; p.dx = target[0] - s1[0]; p.dy = target[1] - s1[1];
+    return true;
+  }
+  function joinDown(e) {
+    const el = e.target.closest('[data-tag]'), sv = e.target.closest('svg.sk-plan'); if (!el || !sv) return;
+    const m = /^(door|opening)-(\d+)$/.exec(el.dataset.tag); if (!m) return;
+    e.preventDefault();
+    const pick = { room: el.dataset.room, kind: m[1], i: +m[2], lvl: sv.dataset.level };
+    if (!joinFirst || joinFirst.lvl !== pick.lvl) { joinFirst = pick; render(); return; }
+    if (pick.room === joinFirst.room) { joinFirst = pick; render(); return; }
+    const R = levelRooms(pick.lvl), A = R.find(r => r.id === joinFirst.room), B = R.find(r => r.id === pick.room);
+    if (joinRooms(pick.lvl, joinFirst, pick)) {
+      selId = B.id; joining = false; joinFirst = null; save(); render();
+      status(`✓ Joined <b>${esc(B.name || 'Room')}</b> to <b>${esc(A.name || 'Room')}</b> at the ${m[1]}. If it's facing the wrong way, tap ↺ 90° / ↻ 90°, or Join again.`);
+    }
+  }
+  $('#skBody').addEventListener('click', e => {
+    if (e.target.closest('[data-join]')) { joining = true; joinFirst = null; render(); }
+    if (e.target.closest('[data-joincancel]')) { joining = false; joinFirst = null; render(); }
+  });
+
   // ---------- editing a room's shape ----------
   const simplify = P => {
     let Q = P.filter((p, i) => Math.hypot(p[0] - P[(i + 1) % P.length][0], p[1] - P[(i + 1) % P.length][1]) > 0.05);

@@ -180,6 +180,8 @@ The iPad app (`ios-app/`) is the same tracker, plus Apple's room scanner (RoomPl
 3. The screen shows the floor plan for each level with wall lengths, plus floor SF, wall SF (gross), ceiling SF,
    floor perimeter LF, ceiling height, and door and window counts per room.
 4. **✥ Move rooms**: drag a room into place (it snaps against nearby walls); tap a room to turn it 90° or 2°.
+   **🚪 Join at a door**: tap a door (or opening) in the room that stays put, then the same door in the other
+   room; the second room turns and slides so the two doors meet across the wall.
    Rooms that landed on top of each other are set side by side automatically until you place them.
 5. **✏️ Edit rooms**: tap a room, then drag its orange corners (they line up with the next corner to keep walls
    square), tap a wall length to type it (e.g. `12' 6"`; the room stretches and stays square), set the ceiling
